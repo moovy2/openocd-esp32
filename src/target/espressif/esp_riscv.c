@@ -319,6 +319,14 @@ int esp_riscv_examine(struct target *target)
 		}
 	}
 
+	for (unsigned int i = 0; i < target->reg_cache->num_regs; i++) {
+		struct reg *reg = &target->reg_cache->reg_list[i];
+		if (!reg->exist) {
+			free(reg->value);
+			reg->value = NULL;
+		}
+	}
+
 	return ERROR_OK;
 }
 
