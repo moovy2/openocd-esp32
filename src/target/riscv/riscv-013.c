@@ -462,6 +462,8 @@ static void reset_learned_delays(struct target *target)
 	RISCV013_INFO(info);
 	assert(info);
 	memset(&info->learned_delays, 0, sizeof(info->learned_delays));
+	/* ESPRESSIF */
+	riscv_scan_set_delay(&info->learned_delays, RISCV_DELAY_BASE, info->dtmcs_idle);
 }
 
 static void decrement_reset_delays_counter(struct target *target, size_t finished_scans)
@@ -2038,6 +2040,9 @@ static int examine(struct target *target)
 	info->index = target->coreid;
 	info->abits = get_field(dtmcontrol, DTM_DTMCS_ABITS);
 	info->dtmcs_idle = get_field(dtmcontrol, DTM_DTMCS_IDLE);
+
+	/* ESPRESSIF */
+	reset_learned_delays(target);
 
 	if (info->abits > RISCV013_DTMCS_ABITS_MAX) {
 		/* Max. address width given by the debug specification is exceeded */
