@@ -247,6 +247,7 @@ class DebuggerSpecialTestsImpl:
                 self.resume_exec()
                 rsn = self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED , 5)
                 self.assertTrue(rsn == dbg.TARGET_STATE_STOPPED or rsn == dbg.TARGET_STOP_REASON_SIGTRAP)
+
                 self.step() # Without step OpenOCD may not print the exception cause
             finally:
                 self.gdb.stream_handler_remove('target', _target_stream_handler)
@@ -469,8 +470,7 @@ class DebuggerSpecialTestsSingle(DebuggerGenericTestAppTestsSingle, DebuggerSpec
 
         # GDB sets registers in current thread, here we assume that it always belongs to CPU0
         # select CPU0 as current target in OpenOCD for multi-core chips
-        _, res_str = self.gdb.monitor_run('target names', output_type='stdout')
-        targets = res_str.strip().split()
+        targets = self.oocd.targets()
         if len(targets) > 1:
             for t in targets:
                 if t.endswith('.cpu0'):

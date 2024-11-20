@@ -128,8 +128,8 @@ TEST_DECL(gh264_psram_check, "test_special.PsramTests*.test_psram_with_flash_bre
 TEST_DECL(illegal_instruction_ex, "test_special.DebuggerSpecialTests*.test_exception_illegal_instruction")
 {
     __asm__ __volatile__ (
-        ".global exception_bp\n" \
-        ".type   exception_bp,@function\n" \
+        ".global exception_bp_1\n" \
+        ".type   exception_bp_1,@function\n" \
         "exception_bp_1:\n" \
         "ILL\n" \
     );
@@ -201,8 +201,8 @@ TEST_DECL(pseudo_coprocessor_ex, "test_special.DebuggerSpecialTests*.test_except
 TEST_DECL(illegal_instruction_ex, "test_special.DebuggerSpecialTests*.test_exception_illegal_instruction")
 {
     __asm__ __volatile__ (
-        ".global exception_bp\n" \
-        ".type   exception_bp,@function\n" \
+        ".global exception_bp_1\n" \
+        ".type   exception_bp_1,@function\n" \
         "exception_bp_1:\n" \
         "unimp\n" \
     );
