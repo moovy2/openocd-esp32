@@ -136,7 +136,8 @@ static void add_idle_before_batch(const struct riscv_batch *batch, size_t start_
 	if (new_delay <= batch->last_scan_delay)
 		return;
 	const unsigned int idle_change = new_delay - batch->last_scan_delay;
-	LOG_TARGET_DEBUG(batch->target, "Adding %u idle cycles before the batch.",
+	/* ESPRESSIF */
+	LOG_TARGET_DEBUG_IO(batch->target, "Adding %u idle cycles before the batch.",
 			idle_change);
 	jtag_add_runtest(idle_change, TAP_IDLE);
 }

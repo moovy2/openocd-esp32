@@ -83,7 +83,8 @@ static inline void riscv_scan_set_delay(struct riscv_scan_delays *delays,
 		enum riscv_scan_delay_class delay_class, unsigned int delay)
 {
 	assert(delay <= RISCV_SCAN_DELAY_MAX);
-	LOG_DEBUG("%s delay is set to %u.",
+	/* ESPRESSIF */
+	LOG_DEBUG_IO("%s delay is set to %u.",
 			riscv_scan_delay_class_name(delay_class), delay);
 	switch (delay_class) {
 	case RISCV_DELAY_BASE:

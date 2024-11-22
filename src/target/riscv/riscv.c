@@ -441,11 +441,13 @@ int dtmcs_scan(struct jtag_tap *tap, uint32_t out, uint32_t *in_ptr)
 	if (in_ptr) {
 		assert(field.in_value);
 		uint32_t in = buf_get_u32(field.in_value, 0, 32);
-		LOG_DEBUG("TAP %s: DTMCS: 0x%" PRIx32 " -> 0x%" PRIx32,
+		/* ESPRESSIF */
+		LOG_DEBUG_IO("TAP %s: DTMCS: 0x%" PRIx32 " -> 0x%" PRIx32,
 				jtag_tap_name(tap), out, in);
 		*in_ptr = in;
 	} else {
-		LOG_DEBUG("TAP %s: DTMCS: 0x%" PRIx32 " -> ?", jtag_tap_name(tap), out);
+		/* ESPRESSIF */
+		LOG_DEBUG_IO("TAP %s: DTMCS: 0x%" PRIx32 " -> ?", jtag_tap_name(tap), out);
 	}
 	return ERROR_OK;
 }
@@ -3626,7 +3628,8 @@ int riscv_arch_state(struct target *target)
 	assert(target->state == TARGET_HALTED);
 	const bool semihosting_active = target->semihosting &&
 		target->semihosting->is_active;
-	LOG_USER("%s halted due to %s.%s",
+	/* ESPRESSIF */
+	LOG_DEBUG("%s halted due to %s.%s",
 			target_name(target),
 			debug_reason_name(target),
 			semihosting_active ? " Semihosting is active." : "");
