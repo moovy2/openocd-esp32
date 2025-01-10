@@ -681,7 +681,7 @@ static const struct stack_register_offset rtos_freertos_esp32_s3_voluntary_stack
 	{ 127, -1, 32 },		/* q7 */
 };
 
-const struct rtos_register_stacking rtos_freertos_esp32_stacking = {
+static const struct rtos_register_stacking rtos_freertos_esp32_stacking = {
 	40*4,				/* stack_registers_size */
 	-1,					/* stack_growth_direction */
 	ARRAY_SIZE(rtos_freertos_esp32_stack_offsets),	/* num_output_registers */
@@ -690,7 +690,7 @@ const struct rtos_register_stacking rtos_freertos_esp32_stacking = {
 	rtos_freertos_esp_xtensa_stack_read_involuntary		/* Custom stack frame read function */
 };
 
-const struct rtos_register_stacking rtos_freertos_esp32_s2_stacking = {
+static const struct rtos_register_stacking rtos_freertos_esp32_s2_stacking = {
 	30*4,				/* stack_registers_size */
 	-1,					/* stack_growth_direction */
 	ARRAY_SIZE(rtos_freertos_esp32_s2_stack_offsets),					/* num_output_registers */
@@ -699,7 +699,7 @@ const struct rtos_register_stacking rtos_freertos_esp32_s2_stacking = {
 	rtos_freertos_esp_xtensa_stack_read_involuntary		/* Custom stack frame read function */
 };
 
-const struct rtos_register_stacking rtos_freertos_esp32_s3_stacking = {
+static const struct rtos_register_stacking rtos_freertos_esp32_s3_stacking = {
 	40*4,				/* stack_registers_size */
 	-1,					/* stack_growth_direction */
 	ARRAY_SIZE(rtos_freertos_esp32_s3_stack_offsets),	/* num_output_registers */
@@ -708,7 +708,7 @@ const struct rtos_register_stacking rtos_freertos_esp32_s3_stacking = {
 	rtos_freertos_esp_xtensa_stack_read_involuntary		/* Custom stack frame read function */
 };
 
-const struct rtos_register_stacking rtos_freertos_voluntary_esp32_stacking = {
+static const struct rtos_register_stacking rtos_freertos_voluntary_esp32_stacking = {
 	0x50,				/* stack_registers_size, including 'faked' stack values */
 	-1,					/* stack_growth_direction */
 	ARRAY_SIZE(rtos_freertos_esp32_voluntary_stack_offsets),	/* num_output_registers */
@@ -717,7 +717,7 @@ const struct rtos_register_stacking rtos_freertos_voluntary_esp32_stacking = {
 	rtos_freertos_esp_xtensa_stack_read_voluntary		/* Custom stack frame read function */
 };
 
-const struct rtos_register_stacking rtos_freertos_voluntary_esp32_s2_stacking = {
+static const struct rtos_register_stacking rtos_freertos_voluntary_esp32_s2_stacking = {
 	0x50,				/* stack_registers_size, including 'faked' stack values */
 	-1,					/* stack_growth_direction */
 	ARRAY_SIZE(rtos_freertos_esp32_s2_voluntary_stack_offsets),	/* num_output_registers */
@@ -726,7 +726,7 @@ const struct rtos_register_stacking rtos_freertos_voluntary_esp32_s2_stacking = 
 	rtos_freertos_esp_xtensa_stack_read_voluntary		/* Custom stack frame read function */
 };
 
-const struct rtos_register_stacking rtos_freertos_voluntary_esp32_s3_stacking = {
+static const struct rtos_register_stacking rtos_freertos_voluntary_esp32_s3_stacking = {
 	0x50,				/* stack_registers_size, including 'faked' stack values */
 	-1,					/* stack_growth_direction */
 	ARRAY_SIZE(rtos_freertos_esp32_s3_voluntary_stack_offsets),	/* num_output_registers */
@@ -771,7 +771,7 @@ static const struct stack_register_offset rtos_freertos_riscv_stack_offsets[] = 
 	{ GDB_REGNO_PC, 0x00, 32 },
 };
 
-const struct rtos_register_stacking rtos_freertos_riscv_stacking = {
+static const struct rtos_register_stacking rtos_freertos_riscv_stacking = {
 	32*4,				/* stack_registers_size */
 	-1,					/* stack_growth_direction */
 	33,					/* num_output_registers */
@@ -805,6 +805,9 @@ static const struct rtos_register_stacking *rtos_freertos_esp_xtensa_pick_stacki
 		return stacking;
 	}
 	retval = target_read_buffer(rtos->target, stack_ptr, 4, (uint8_t *)&stk_exit);
+	if (retval != ERROR_OK) {
+		return stacking;
+	}
 
 	if (stk_exit) {
 		return stacking;
@@ -934,7 +937,7 @@ const struct freertos_tls_info *rtos_freertos_get_tls_info(struct target *target
 			return &s_xtensa_tls;
 		struct reg **reg_list;
 		int num_regs;
-		int retval = target_get_gdb_reg_list(target, &reg_list, &num_regs, REG_CLASS_GENERAL);
+		int retval = target_get_gdb_reg_list_noread(target, &reg_list, &num_regs, REG_CLASS_GENERAL);
 		if (retval != ERROR_OK)
 			return NULL;
 

@@ -109,7 +109,7 @@ static int tcl_target_callback_trace_handler(struct target *target,
  * this is a blocking write, so the return value must equal the length, if
  * that is not the case then flag the connection with an output error.
  */
-int tcl_output(struct connection *connection, const void *data, ssize_t len)
+static int tcl_output(struct connection *connection, const void *data, ssize_t len)
 {
 	ssize_t wlen;
 	struct tcl_connection *tclc;
@@ -323,29 +323,40 @@ COMMAND_HANDLER(handle_tcl_trace_command)
 	}
 }
 
-static const struct command_registration tcl_command_handlers[] = {
+static const struct command_registration tcl_subcommand_handlers[] = {
 	{
-		.name = "tcl_port",
+		.name = "port",
 		.handler = handle_tcl_port_command,
 		.mode = COMMAND_CONFIG,
 		.help = "Specify port on which to listen "
 			"for incoming Tcl syntax.  "
-			"Read help on 'gdb_port'.",
+			"Read help on 'gdb port'.",
 		.usage = "[port_num]",
 	},
 	{
-		.name = "tcl_notifications",
+		.name = "notifications",
 		.handler = handle_tcl_notifications_command,
 		.mode = COMMAND_EXEC,
 		.help = "Target Notification output",
 		.usage = "[on|off]",
 	},
 	{
-		.name = "tcl_trace",
+		.name = "trace",
 		.handler = handle_tcl_trace_command,
 		.mode = COMMAND_EXEC,
 		.help = "Target trace output",
 		.usage = "[on|off]",
+	},
+	COMMAND_REGISTRATION_DONE
+};
+
+static const struct command_registration tcl_command_handlers[] = {
+	{
+		.name = "tcl",
+		.mode = COMMAND_ANY,
+		.help = "tcl command group",
+		.usage = "",
+		.chain = tcl_subcommand_handlers,
 	},
 	COMMAND_REGISTRATION_DONE
 };

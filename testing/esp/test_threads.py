@@ -14,7 +14,7 @@ def get_logger():
 
 class DebuggerThreadsTestsImpl:
 
-    @idf_ver_min_for_arch('latest', ['riscv32'])
+    @skip_for_chip(['esp32c5', 'esp32c61'], "skipped - OCD-1049")
     def test_threads_backtraces(self):
         """
             This test switches between threads and checks that their backtraces are as expected:
@@ -24,7 +24,6 @@ class DebuggerThreadsTestsImpl:
             4) Stops app execution
             5) Switches between tasks and checks their backtraces
         """
-        self.select_sub_test(400)
         self.add_bp('check_backtrace_test_done')
         self.run_to_bp(dbg.TARGET_STOP_REASON_BP, 'check_backtrace_test_done', tmo=120)
         test_tasks = {'1': [3, 0], '2': [7, 0], '3': [5, 0]}
@@ -48,6 +47,7 @@ class DebuggerThreadsTestsImpl:
         for suf in test_tasks:
             self.assertEqual(test_tasks[suf][1], 1)
 
+    @skip_for_chip(['esp32c5', 'esp32c61'], "skipped - OCD-1049")
     def test_thread_switch(self):
         """
             This test switch a threads and check that expected thread id and current thread id are the same.
@@ -56,7 +56,6 @@ class DebuggerThreadsTestsImpl:
             3) Compare that active thread id and expected thread id are the same
             4) Repeat test several times
         """
-        self.select_sub_test(401)
         self.add_bp('test_check_bp')
 
         for i in range(10):
@@ -88,11 +87,33 @@ class DebuggerThreadsTestsImpl:
 class DebuggerThreadsTestsDual(DebuggerGenericTestAppTestsDual, DebuggerThreadsTestsImpl):
     """ Test cases in dual core mode
     """
-    # no special tests for dual core mode yet
-    pass
+
+    @skip_for_chip_and_ver(['5.3', '5.4', 'latest'], ['esp32', 'esp32s3'], "skipped - OCD-1050")
+    def test_threads_backtraces(self):
+        super(DebuggerGenericTestAppTestsDual, self).test_threads_backtraces()
 
 class DebuggerThreadsTestsSingle(DebuggerGenericTestAppTestsSingle, DebuggerThreadsTestsImpl):
     """ Test cases in single core mode
     """
     # no special tests for single core mode yet
     pass
+
+@idf_ver_min('5.3')
+class DebuggerThreadsTestsAmazonFreeRTOSDual(DebuggerGenericTestAppTestsDual, DebuggerThreadsTestsImpl):
+
+    def __init__(self, methodName='runTest'):
+        super(DebuggerGenericTestAppTestsDual, self).__init__(methodName)
+        self.test_app_cfg.bin_dir = os.path.join('output', 'default_amazon_freertos')
+        self.test_app_cfg.build_dir = os.path.join('builds', 'default_amazon_freertos')
+
+    @skip_for_chip(['esp32', 'esp32s3'], "skipped - OCD-1050")
+    def test_threads_backtraces(self):
+        super(DebuggerGenericTestAppTestsDual, self).test_threads_backtraces()
+
+@idf_ver_min('5.3')
+class DebuggerThreadsTestsAmazonFreeRTOSSingle(DebuggerGenericTestAppTestsSingle, DebuggerThreadsTestsImpl):
+
+    def __init__(self, methodName='runTest'):
+        super(DebuggerGenericTestAppTestsSingle, self).__init__(methodName)
+        self.test_app_cfg.bin_dir = os.path.join('output', 'single_core_amazon_freertos')
+        self.test_app_cfg.build_dir = os.path.join('builds', 'single_core_amazon_freertos')

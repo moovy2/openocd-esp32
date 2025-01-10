@@ -204,6 +204,7 @@ struct armv8_common {
 	uint8_t pa_size;
 	uint32_t page_size;
 	uint64_t ttbr_base;
+	bool is_armv8r;
 
 	struct armv8_mmu_common armv8_mmu;
 
@@ -211,6 +212,8 @@ struct armv8_common {
 
 	/* True if OpenOCD provides pointer auth related info to GDB */
 	bool enable_pauth;
+
+	bool sticky_reset;
 
 	/* last run-control command issued to this target (resume, halt, step) */
 	enum run_control_op last_run_control_op;
@@ -295,7 +298,6 @@ int armv8_identify_cache(struct armv8_common *armv8);
 int armv8_init_arch_info(struct target *target, struct armv8_common *armv8);
 int armv8_mmu_translate_va_pa(struct target *target, target_addr_t va,
 		target_addr_t *val, int meminfo);
-int armv8_mmu_translate_va(struct target *target,  target_addr_t va, target_addr_t *val);
 
 int armv8_handle_cache_info_command(struct command_invocation *cmd,
 		struct armv8_cache_common *armv8_cache);
@@ -326,7 +328,7 @@ static inline unsigned int armv8_curel_from_core_mode(enum arm_mode core_mode)
 	}
 }
 
-const char *armv8_mode_name(unsigned psr_mode);
+const char *armv8_mode_name(unsigned int psr_mode);
 void armv8_select_reg_access(struct armv8_common *armv8, bool is_aarch64);
 int armv8_set_dbgreg_bits(struct armv8_common *armv8, unsigned int reg, unsigned long mask, unsigned long value);
 

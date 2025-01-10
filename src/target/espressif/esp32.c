@@ -394,7 +394,7 @@ static const char *esp32_reset_reason_str(int coreid, enum esp32_reset_reason re
 	return "Unknown reset cause";
 }
 
-int esp32_reset_reason_fetch(struct target *target, int *rsn_id, const char **rsn_str)
+static int esp32_reset_reason_fetch(struct target *target, int *rsn_id, const char **rsn_str)
 {
 	uint32_t rsn_val;
 
@@ -437,8 +437,9 @@ static const struct xtensa_power_ops esp32_pwr_ops = {
 };
 
 static const struct esp_flash_breakpoint_ops esp32_flash_brp_ops = {
+	.breakpoint_prepare = esp_algo_flash_breakpoint_prepare,
 	.breakpoint_add = esp_algo_flash_breakpoint_add,
-	.breakpoint_remove = esp_algo_flash_breakpoint_remove
+	.breakpoint_remove = esp_algo_flash_breakpoint_remove,
 };
 
 static const struct esp_xtensa_smp_chip_ops esp32_chip_ops = {
@@ -665,6 +666,7 @@ struct target_type esp32_target = {
 
 	.add_watchpoint = esp_xtensa_smp_watchpoint_add,
 	.remove_watchpoint = esp_xtensa_smp_watchpoint_remove,
+	.hit_watchpoint = xtensa_watchpoint_hit,
 
 	.target_create = esp32_target_create,
 	.init_target = esp32_target_init,

@@ -21,15 +21,12 @@ class BreakpointTestsImpl:
 
     def setUp(self):
         self.bps = []
-        if testee_info.chip == "esp32c3":
-            # esp32c3 has 8 HW breakpoint slots
-            # 6 dummy HW breaks to fill in HW breaks slots and make OpenOCD using SW breakpoints in flash (seen as HW ones by GDB)
-            self.bps = ['unused_func0', 'unused_func1', 'unused_func2', 'unused_func3', 'unused_func4', 'unused_func5']
-        elif testee_info.chip == "esp32c6" or testee_info.chip == "esp32h2":
-            # esp32c6 has 4 HW breakpoint slots
-            # 2 dummy HW breaks to fill in HW breaks slots and make OpenOCD using SW breakpoints in flash (seen as HW ones by GDB)
-            self.bps = ['unused_func0', 'unused_func1']
-        # + 2 HW breaks + 1 flash SW break + RAM SW break
+        if testee_info.arch == 'riscv32':
+            info = self.oocd.cmd_exec('riscv info')
+            hw_bps = int(info.split('\n')[1].split()[-1])
+            self.assertTrue(hw_bps <= 8 and hw_bps >= 2)
+            # dummy HW breaks to fill in HW breaks slots and make OpenOCD using SW breakpoints in flash (seen as HW ones by GDB)
+            self.bps += ['unused_func0', 'unused_func1', 'unused_func2', 'unused_func3', 'unused_func4', 'unused_func5'][:hw_bps - 2]
         self.bps += ['app_main', 'gpio_set_direction', 'gpio_set_level', 'vTaskDelay']
 
     def test_multi_reset_break(self):
@@ -72,7 +69,7 @@ class BreakpointTestsImpl:
             6) Removes several breakpoints and adds them again.
             7) Repeat steps 3-5 several times.
         """
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         for f in self.bps:
             self.add_bp(f)
         self.readd_bps()
@@ -98,7 +95,7 @@ class BreakpointTestsImpl:
             6) Check backtrace at the stop point.
             7) Repeat steps 3-6 several times.
         """
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         for f in self.bps:
             if f == 'vTaskDelay':
                 self.add_bp(f, ignore_count=2)
@@ -124,7 +121,7 @@ class BreakpointTestsImpl:
             6) Check backtrace at the stop point.
             7) Repeat steps 3-6 several times.
         """
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         for f in self.bps:
             if f == 'vTaskDelay':
                 self.add_bp(f, cond='s_count1 == 1')
@@ -153,7 +150,7 @@ class BreakpointTestsImpl:
             7) Connect GDB to OOCD.
             8) Repeat steps 3-7 several times.
         """
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         for f in self.bps:
             self.add_bp(f)
         for i in range(5):
@@ -181,21 +178,22 @@ class BreakpointTestsImpl:
         """
         # 2 HW breaks + 1 flash SW break + RAM SW break
         self.bps = ['app_main', 'test_timer_isr', 'test_timer_isr_func', 'test_timer_isr_ram_func']
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         for f in self.bps:
             self.add_bp(f)
 
-        # riscv gdb11 workaround
-        run_bt = True if testee_info.arch == "riscv32" and testee_info.idf_ver >= IdfVersion.fromstr('5.0') else False
+        # riscv workaround
+        run_bt = testee_info.arch == "riscv32"
         for i in range(3):
             self.run_to_bp_and_check_basic(dbg.TARGET_STOP_REASON_BP, 'test_timer_isr', run_bt)
             self.run_to_bp_and_check_basic(dbg.TARGET_STOP_REASON_BP, 'test_timer_isr_func', run_bt)
             self.run_to_bp_and_check_basic(dbg.TARGET_STOP_REASON_BP, 'test_timer_isr_ram_func', run_bt)
 
-@skip_for_chip(['esp32c2'])
 class WatchpointTestsImpl:
     """ Watchpoints test cases which are common for dual and single core modes
     """
+
+    wp_stop_reason = [dbg.TARGET_STOP_REASON_SIGTRAP, dbg.TARGET_STOP_REASON_WP]
 
     def test_wp_simple(self):
         """
@@ -208,29 +206,24 @@ class WatchpointTestsImpl:
             6) Check that watched expression has correct value.
             7) Repeat steps 3-6 several times.
         """
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         self.wps = {'s_count1': None}
         for e in self.wps:
             self.add_wp(e, 'rw')
         cnt = 0
-        wp_stop_reason = [dbg.TARGET_STOP_REASON_SIGTRAP, dbg.TARGET_STOP_REASON_WP]
         for i in range(3):
             # 'count' read
-            self.run_to_bp_and_check(wp_stop_reason, 'blink_task', ['s_count10'])
+            self.run_to_bp_and_check(self.wp_stop_reason, 'blink_task', ['s_count10'])
             var_val = int(self.gdb.data_eval_expr('s_count1'))
             self.assertEqual(var_val, cnt)
             # 'count' read
-            self.run_to_bp_and_check(wp_stop_reason, 'blink_task', ['s_count11'])
+            self.run_to_bp_and_check(self.wp_stop_reason, 'blink_task', ['s_count11'])
             var_val = int(self.gdb.data_eval_expr('s_count1'))
             self.assertEqual(var_val, cnt)
             # 'count' write
-            self.run_to_bp_and_check(wp_stop_reason, 'blink_task', ['s_count11'])
+            self.run_to_bp_and_check(self.wp_stop_reason, 'blink_task', ['s_count11'])
             var_val = int(self.gdb.data_eval_expr('s_count1'))
-            # FIXME: GCC-307
-            if testee_info.arch == "riscv32" and testee_info.idf_ver > IdfVersion.fromstr('5.0'):
-                self.assertEqual(var_val, cnt+1)
-            else:
-                self.assertEqual(var_val, cnt)
+            self.assertEqual(var_val, cnt+1)
             cnt += 1
 
     def test_wp_and_reconnect(self):
@@ -246,31 +239,22 @@ class WatchpointTestsImpl:
             7) Connect GDB to OOCD.
             8) Repeat steps 3-7 several times.
         """
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         self.wps = {'s_count1': None, 's_count2': None}
         cnt = 0
         cnt2 = 100
         for e in self.wps:
             self.add_wp(e, 'w')
-        wp_stop_reason = [dbg.TARGET_STOP_REASON_SIGTRAP, dbg.TARGET_STOP_REASON_WP]
         for i in range(5):
             if (i % 2) == 0:
-                self.run_to_bp_and_check(wp_stop_reason, 'blink_task', ['s_count11'])
+                self.run_to_bp_and_check(self.wp_stop_reason, 'blink_task', ['s_count11'])
                 var_val = int(self.gdb.data_eval_expr('s_count1'))
-                # FIXME: GCC-307
-                if testee_info.arch == "riscv32" and testee_info.idf_ver > IdfVersion.fromstr('5.0'):
-                    self.assertEqual(var_val, cnt+1)
-                else:
-                    self.assertEqual(var_val, cnt)
+                self.assertEqual(var_val, cnt+1)
                 cnt += 1
             else:
-                self.run_to_bp_and_check(wp_stop_reason, 'blink_task', ['s_count2'])
+                self.run_to_bp_and_check(self.wp_stop_reason, 'blink_task', ['s_count2'])
                 var_val = int(self.gdb.data_eval_expr('s_count2'))
-                # FIXME: GCC-307
-                if testee_info.arch == "riscv32" and testee_info.idf_ver > IdfVersion.fromstr('5.0'):
-                    self.assertEqual(var_val, cnt2-1)
-                else:
-                    self.assertEqual(var_val, cnt2)
+                self.assertEqual(var_val, cnt2-1)
                 cnt2 -= 1
             self.gdb.disconnect()
             sleep(0.1) #sleep 100ms
@@ -292,7 +276,6 @@ def two_cores_concurrently_hit_bps(self):
         7) Check that all set breakpoints hit one time at least.
     """
     hit_cnt = [0] * len(self.bps)
-    self.select_sub_test(101)
     for f in self.bps:
         self.add_bp(f)
     for i in range(30):
@@ -307,7 +290,7 @@ def two_cores_concurrently_hit_bps(self):
         self.assertTrue(len(frames) > 0)
         self.assertEqual(frames[0]['func'], cur_frame['func'])
         self.assertEqual(frames[0]['line'], cur_frame['line'])
-    for cnt in hit_cnt[1:]:
+    for cnt in hit_cnt[-3:]:
         self.assertTrue(cnt > 0)
 
 def two_cores_concurrently_hit_wps(self):
@@ -320,14 +303,43 @@ def two_cores_concurrently_hit_wps(self):
         5) Check backtrace at the stop point.
         6) Repeat steps 3-5 several times.
     """
-    self.select_sub_test(101)
     self.wps = {'s_count1': None, 's_count2': None}
-    cnt = 0
-    cnt2 = 100
     for e in self.wps:
         self.add_wp(e, 'w')
+    wp_stop_reason = [dbg.TARGET_STOP_REASON_SIGTRAP]
+    if testee_info.arch == "xtensa" or testee_info.idf_ver > IdfVersion.fromstr('5.0'):
+        wp_stop_reason.append(dbg.TARGET_STOP_REASON_WP)
     for i in range(10):
-        self.run_to_bp_and_check(dbg.TARGET_STOP_REASON_SIGTRAP, 'blink_task', ['s_count11', 's_count2'])
+        self.run_to_bp_and_check(wp_stop_reason, 'blink_task', ['s_count11', 's_count2'])
+
+
+def appcpu_early_hw_bps(self):
+    """
+        This test checks if breakpoints set on APP_CPU just after reset work well.
+    """
+    self.gdb.target_reset()
+    rsn = self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 10)
+    self.add_bp('call_start_cpu1', hw=True)
+    self.resume_exec()
+    self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 10)
+    # We stopped when FreRTOS is not running yet, so GDB is connected to
+    # one core only (most probably core 0) and shows only one thread representing that core.
+    # Prepare to switch GDB to core 1.
+    self.gdb.monitor_run("esp32 smp_gdb 1", 5)
+    try:
+        # Switch GDB to core 1.
+        self.gdb.monitor_run("resume", 5)
+        # Invalidate register cache to re-read them and get proper backtrace
+        self.gdb.console_cmd_run("maint flush register-cache", 5)
+        # In this scenario we can not check stop reason for core 1,
+        # because GDB could be initially connected to core 0.
+        # So just check the function name we stopped in on core 1.
+        frame = self.gdb.read_current_frame()
+        self.assertEqual(frame['func'], 'call_start_cpu1')
+    finally:
+        # restore default GDB SMP handling to avoid other tests failures
+        self.gdb.monitor_run("esp32 smp_gdb -1", 5)
+        self.gdb.monitor_run("resume", 5)
 
 class DebuggerBreakpointTestsDual(DebuggerGenericTestAppTestsDual, BreakpointTestsImpl):
     """ Test cases for breakpoints in dual core mode
@@ -337,8 +349,13 @@ class DebuggerBreakpointTestsDual(DebuggerGenericTestAppTestsDual, BreakpointTes
         DebuggerGenericTestAppTestsDual.setUp(self)
         BreakpointTestsImpl.setUp(self)
 
+    @skip_for_chip_and_ver(['5.1'], ['esp32s3'], "skipped - OCD-1027")
     def test_2cores_concurrently_hit_bps(self):
         two_cores_concurrently_hit_bps(self)
+
+    @skip_for_chip(['esp32', 'esp32p4'], "skipped - OCD-773")
+    def test_appcpu_early_hw_bps(self):
+        appcpu_early_hw_bps(self)
 
 class DebuggerBreakpointTestsDualEncrypted(DebuggerGenericTestAppTestsDualEncrypted, BreakpointTestsImpl):
     """ Breakpoint test cases on encrypted flash in dual core mode
@@ -349,6 +366,10 @@ class DebuggerBreakpointTestsDualEncrypted(DebuggerGenericTestAppTestsDualEncryp
 
     def test_2cores_concurrently_hit_bps(self):
         two_cores_concurrently_hit_bps(self)
+
+    @skip_for_chip(['esp32'], "skipped - OCD-773, OCD-1006")
+    def test_appcpu_early_hw_bps(self):
+        appcpu_early_hw_bps(self)
 
 class DebuggerBreakpointTestsSingle(DebuggerGenericTestAppTestsSingle, BreakpointTestsImpl):
     """ Test cases for breakpoints in single core mode
@@ -386,3 +407,21 @@ class DebuggerWatchpointTestsSingleEncrypted(DebuggerGenericTestAppTestsSingleEn
     """ Watchpoint test cases on encrypted flash in single core mode
     """
     pass
+
+class DebuggerTestsSingle4MB(DebuggerGenericTestAppTestsSingle):
+    """ Base class to run tests with a single core 4MB flash config
+    """
+
+    def __init__(self, methodName='runTest'):
+        super(DebuggerTestsSingle4MB, self).__init__(methodName)
+        self.test_app_cfg.bin_dir = os.path.join('output', 'single_core_4MB')
+        self.test_app_cfg.build_dir = os.path.join('builds', 'single_core_4MB')
+
+@only_for_chip(['esp32c2', 'esp32c6', 'esp32h2'])
+class FlashTestsSingle4MB(DebuggerTestsSingle4MB, BreakpointTestsImpl):
+    """ Breakpoint test cases via GDB in single core mode with 4MB flash config
+    """
+
+    def setUp(self):
+        DebuggerTestsSingle4MB.setUp(self)
+        BreakpointTestsImpl.setUp(self)

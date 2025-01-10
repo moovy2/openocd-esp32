@@ -172,6 +172,10 @@ if(BUILD_RSHIM)
     target_sources(ocdjtagdrivers PRIVATE rshim.c)
 endif()
 
+if(BUILD_DMEM)
+    target_sources(ocdjtagdrivers PRIVATE dmem.c)
+endif()
+
 if(BUILD_OSBDM)
     target_sources(ocdjtagdrivers PRIVATE osbdm.c)
 endif()
@@ -228,7 +232,7 @@ if(BUILD_ESP_REMOTE)
 endif()
 
 if(IS_ESPIDF)
-    target_sources(ocdjtagdrivers PRIVATE esp32gpio.c)
+    target_sources(ocdjtagdrivers PRIVATE esp_gpio.c)
     target_link_libraries(ocdjtagdrivers PRIVATE idf::driver)
 endif()
 

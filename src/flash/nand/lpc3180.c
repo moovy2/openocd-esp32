@@ -582,22 +582,22 @@ static int lpc3180_write_page(struct nand_device *nand,
 				return retval;
 
 			/* allocate a working area */
-			if (target->working_area_cfg.size < (uint32_t) nand->page_size + 0x200) {
+			if (target->working_area_size < (uint32_t)nand->page_size + 0x200) {
 				LOG_ERROR("Reserve at least 0x%x physical target working area",
 					nand->page_size + 0x200);
 				return ERROR_FLASH_OPERATION_FAILED;
 			}
-			if (target->working_area_cfg.phys%4) {
+			if (target->working_area_phys % 4) {
 				LOG_ERROR(
 					"Reserve the physical target working area at word boundary");
 				return ERROR_FLASH_OPERATION_FAILED;
 			}
-			if (target_alloc_working_area(target, target->working_area_cfg.size,
+			if (target_alloc_working_area(target, target->working_area_size,
 				    &pworking_area) != ERROR_OK) {
 				LOG_ERROR("no working area specified, can't read LPC internal flash");
 				return ERROR_FLASH_OPERATION_FAILED;
 			}
-			target_mem_base = target->working_area_cfg.phys;
+			target_mem_base = target->working_area_phys;
 
 			if (nand->page_size == 2048)
 				page_buffer = malloc(2048);
@@ -890,8 +890,7 @@ static int lpc3180_read_page(struct nand_device *nand,
 
 			if (mlc_isr & 0x8) {
 				if (mlc_isr & 0x40) {
-					LOG_ERROR("uncorrectable error detected: 0x%2.2x",
-						(unsigned)mlc_isr);
+					LOG_ERROR("uncorrectable error detected: 0x%2.2" PRIx32, mlc_isr);
 					free(page_buffer);
 					free(oob_buffer);
 					return ERROR_NAND_OPERATION_FAILED;
@@ -963,22 +962,22 @@ static int lpc3180_read_page(struct nand_device *nand,
 				return retval;
 
 			/* allocate a working area */
-			if (target->working_area_cfg.size < (uint32_t) nand->page_size + 0x200) {
+			if (target->working_area_size < (uint32_t)nand->page_size + 0x200) {
 				LOG_ERROR("Reserve at least 0x%x physical target working area",
 					nand->page_size + 0x200);
 				return ERROR_FLASH_OPERATION_FAILED;
 			}
-			if (target->working_area_cfg.phys%4) {
+			if (target->working_area_phys % 4) {
 				LOG_ERROR(
 					"Reserve the physical target working area at word boundary");
 				return ERROR_FLASH_OPERATION_FAILED;
 			}
-			if (target_alloc_working_area(target, target->working_area_cfg.size,
+			if (target_alloc_working_area(target, target->working_area_size,
 				    &pworking_area) != ERROR_OK) {
 				LOG_ERROR("no working area specified, can't read LPC internal flash");
 				return ERROR_FLASH_OPERATION_FAILED;
 			}
-			target_mem_base = target->working_area_cfg.phys;
+			target_mem_base = target->working_area_phys;
 
 			if (nand->page_size == 2048)
 				page_buffer = malloc(2048);
@@ -1275,7 +1274,7 @@ COMMAND_HANDLER(handle_lpc3180_select_command)
 	if ((CMD_ARGC < 1) || (CMD_ARGC > 3))
 		return ERROR_COMMAND_SYNTAX_ERROR;
 
-	unsigned num;
+	unsigned int num;
 	COMMAND_PARSE_NUMBER(uint, CMD_ARGV[0], num);
 	struct nand_device *nand = get_nand_device_by_num(num);
 	if (!nand) {
