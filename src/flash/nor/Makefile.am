@@ -28,6 +28,7 @@ NOR_DRIVERS = \
 	%D%/dsp5680xx_flash.c \
 	%D%/efm32.c \
 	%D%/em357.c \
+	%D%/eneispif.c \
 	%D%/esp_flash.c \
 	%D%/esp_xtensa.c \
 	%D%/esp_riscv.c \
@@ -37,7 +38,10 @@ NOR_DRIVERS = \
 	%D%/esp32h2.c \
 	%D%/esp32c3.c \
 	%D%/esp32s3.c \
+	%D%/esp32c5.c \
 	%D%/esp32c6.c \
+	%D%/esp32c61.c \
+	%D%/esp32p4.c \
 	%D%/esirisc_flash.c \
 	%D%/faux.c \
 	%D%/fespi.c \
@@ -64,6 +68,7 @@ NOR_DRIVERS = \
 	%D%/psoc4.c \
 	%D%/psoc5lp.c \
 	%D%/psoc6.c \
+	%D%/qn908x.c \
 	%D%/renesas_rpchf.c \
 	%D%/rp2040.c \
 	%D%/rsl10.c \

@@ -233,7 +233,7 @@ if(BUILD_ESP_COMPRESSION)
     check_include_files(zlib.h HAVE_ZLIB_H)
 endif()
 
-if(BUILD_GCOV)
+if(USE_GCOV)
     # CFLAGS+=" -fprofile-arcs -ftest-coverage"
 endif()
 
@@ -294,6 +294,9 @@ if(NOT ${host_os} MATCHES "(linux*)")
     if (BUILD_RSHIM AND NOT ${host_os} MATCHES "(freebsd*)")
         message(SEND_ERROR "build_rshim is only available on linux or freebsd")
     endif()
+	if (BUILD_DMEM)
+		message(SEND_ERROR "dmem is only available on linux")
+	endif()
 endif()
 
 # Process adapters
@@ -375,7 +378,7 @@ set(OPENOCD_COMMON_COMPILER_FLAGS
 
 # TODO: add sanitizers and gcov as custom target.
 # Check https://github.com/bilke/cmake-modules/blob/master/CodeCoverage.cmake
-if(BUILD_GCOV)
+if(USE_GCOV)
     set(OPENOCD_COMMON_COMPILER_FLAGS ${OPENOCD_COMMON_COMPILER_FLAGS} -fprofile-arcs -ftest-coverage)
     SET(CMAKE_EXE_LINKER_FLAGS "-fprofile-arcs -ftest-coverage")
 endif()

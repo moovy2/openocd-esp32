@@ -46,7 +46,7 @@ enum arm_state armv8_dpm_get_core_state(struct arm_dpm *dpm)
 	dpm->last_el = el;
 
 	/* In Debug state, each bit gives the current Execution state of each EL */
-	if ((rw >> el) & 0b1)
+	if ((rw >> el) & 1)
 		return ARM_STATE_AARCH64;
 
 	return ARM_STATE_ARM;
@@ -274,7 +274,7 @@ static int dpmv8_instr_write_data_dcc(struct arm_dpm *dpm,
 	if (retval != ERROR_OK)
 		return retval;
 
-	return dpmv8_exec_opcode(dpm, opcode, 0);
+	return dpmv8_exec_opcode(dpm, opcode, NULL);
 }
 
 static int dpmv8_instr_write_data_dcc_64(struct arm_dpm *dpm,
@@ -287,7 +287,7 @@ static int dpmv8_instr_write_data_dcc_64(struct arm_dpm *dpm,
 	if (retval != ERROR_OK)
 		return retval;
 
-	return dpmv8_exec_opcode(dpm, opcode, 0);
+	return dpmv8_exec_opcode(dpm, opcode, NULL);
 }
 
 static int dpmv8_instr_write_data_r0(struct arm_dpm *dpm,
@@ -417,7 +417,7 @@ static int dpmv8_instr_read_data_r0_64(struct arm_dpm *dpm,
 }
 
 #if 0
-static int dpmv8_bpwp_enable(struct arm_dpm *dpm, unsigned index_t,
+static int dpmv8_bpwp_enable(struct arm_dpm *dpm, unsigned int index_t,
 	target_addr_t addr, uint32_t control)
 {
 	struct armv8_common *armv8 = dpm->arm->arch_info;
@@ -441,8 +441,7 @@ static int dpmv8_bpwp_enable(struct arm_dpm *dpm, unsigned index_t,
 	vr += 16 * index_t;
 	cr += 16 * index_t;
 
-	LOG_DEBUG("A8: bpwp enable, vr %08x cr %08x",
-		(unsigned) vr, (unsigned) cr);
+	LOG_DEBUG("A8: bpwp enable, vr %08" PRIx32 " cr %08" PRIx32, vr, cr);
 
 	retval = mem_ap_write_atomic_u32(armv8->debug_ap, vr, addr);
 	if (retval != ERROR_OK)
@@ -451,7 +450,7 @@ static int dpmv8_bpwp_enable(struct arm_dpm *dpm, unsigned index_t,
 }
 #endif
 
-static int dpmv8_bpwp_disable(struct arm_dpm *dpm, unsigned index_t)
+static int dpmv8_bpwp_disable(struct arm_dpm *dpm, unsigned int index_t)
 {
 	struct armv8_common *armv8 = dpm->arm->arch_info;
 	uint32_t cr;
@@ -469,7 +468,7 @@ static int dpmv8_bpwp_disable(struct arm_dpm *dpm, unsigned index_t)
 	}
 	cr += 16 * index_t;
 
-	LOG_DEBUG("A: bpwp disable, cr %08x", (unsigned) cr);
+	LOG_DEBUG("A: bpwp disable, cr %08" PRIx32, cr);
 
 	/* clear control register */
 	return mem_ap_write_atomic_u32(armv8->debug_ap, cr, 0);
@@ -501,7 +500,7 @@ static int dpmv8_mrc(struct target *target, int cpnum,
 			ARMV4_5_MRC(cpnum, op1, 0, crn, crm, op2),
 			value);
 
-	/* (void) */ dpm->finish(dpm);
+	dpm->finish(dpm);
 	return retval;
 }
 
@@ -526,7 +525,7 @@ static int dpmv8_mcr(struct target *target, int cpnum,
 			ARMV4_5_MCR(cpnum, op1, 0, crn, crm, op2),
 			value);
 
-	/* (void) */ dpm->finish(dpm);
+	dpm->finish(dpm);
 	return retval;
 }
 
@@ -587,6 +586,9 @@ int armv8_dpm_modeswitch(struct arm_dpm *dpm, enum arm_mode mode)
 	}
 
 	LOG_DEBUG("target_el = %i, last_el = %i", target_el, dpm->last_el);
+	if (dpm->last_el == target_el)
+		return ERROR_OK; /* nothing to do */
+
 	if (target_el > dpm->last_el) {
 		retval = dpm->instr_execute(dpm,
 				armv8_opcode(armv8, ARMV8_OPC_DCPS) | target_el);
@@ -639,7 +641,7 @@ int armv8_dpm_modeswitch(struct arm_dpm *dpm, enum arm_mode mode)
 /*
  * Common register read, relies on armv8_select_reg_access() having been called.
  */
-static int dpmv8_read_reg(struct arm_dpm *dpm, struct reg *r, unsigned regnum)
+static int dpmv8_read_reg(struct arm_dpm *dpm, struct reg *r, unsigned int regnum)
 {
 	struct armv8_common *armv8 = dpm->arm->arch_info;
 	int retval = ERROR_FAIL;
@@ -674,7 +676,7 @@ static int dpmv8_read_reg(struct arm_dpm *dpm, struct reg *r, unsigned regnum)
 	}
 
 	if (retval != ERROR_OK)
-		LOG_ERROR("Failed to read %s register", r->name);
+		LOG_DEBUG("Failed to read %s register", r->name);
 
 	return retval;
 }
@@ -682,7 +684,7 @@ static int dpmv8_read_reg(struct arm_dpm *dpm, struct reg *r, unsigned regnum)
 /*
  * Common register write, relies on armv8_select_reg_access() having been called.
  */
-static int dpmv8_write_reg(struct arm_dpm *dpm, struct reg *r, unsigned regnum)
+static int dpmv8_write_reg(struct arm_dpm *dpm, struct reg *r, unsigned int regnum)
 {
 	struct armv8_common *armv8 = dpm->arm->arch_info;
 	int retval = ERROR_FAIL;
@@ -716,13 +718,14 @@ static int dpmv8_write_reg(struct arm_dpm *dpm, struct reg *r, unsigned regnum)
 	}
 
 	if (retval != ERROR_OK)
-		LOG_ERROR("Failed to write %s register", r->name);
+		LOG_DEBUG("Failed to write %s register", r->name);
 
 	return retval;
 }
 
 /**
- * Read basic registers of the current context:  R0 to R15, and CPSR;
+ * Read basic registers of the current context:  R0 to R15, and CPSR in AArch32
+ * state or R0 to R31, PC and CPSR in AArch64 state;
  * sets the core mode (such as USR or IRQ) and state (such as ARM or Thumb).
  * In normal operation this is called on entry to halting debug state,
  * possibly after some other operations supporting restore of debug state
@@ -769,8 +772,14 @@ int armv8_dpm_read_current_registers(struct arm_dpm *dpm)
 	/* update core mode and state */
 	armv8_set_cpsr(arm, cpsr);
 
-	for (unsigned int i = ARMV8_PC; i < cache->num_regs ; i++) {
+	/* read the remaining registers that would be required by GDB 'g' packet */
+	for (unsigned int i = ARMV8_R2; i <= ARMV8_PC ; i++) {
 		struct arm_reg *arm_reg;
+
+		/* in AArch32 skip AArch64 registers */
+		/* TODO: this should be detected below through arm_reg->mode */
+		if (arm->core_state != ARM_STATE_AARCH64 && i > ARMV8_R14 && i < ARMV8_PC)
+			continue;
 
 		r = armv8_reg_current(arm, i);
 		if (!r->exist || r->valid)
@@ -878,7 +887,7 @@ int armv8_dpm_write_dirty_registers(struct arm_dpm *dpm, bool bpwp)
 	 * cope with the hand-crafted breakpoint code.
 	 */
 	if (arm->target->type->add_breakpoint == dpmv8_add_breakpoint) {
-		for (unsigned i = 0; i < dpm->nbp; i++) {
+		for (unsigned int i = 0; i < dpm->nbp; i++) {
 			struct dpm_bp *dbp = dpm->dbp + i;
 			struct breakpoint *bp = dbp->bp;
 
@@ -890,7 +899,7 @@ int armv8_dpm_write_dirty_registers(struct arm_dpm *dpm, bool bpwp)
 	}
 
 	/* enable/disable watchpoints */
-	for (unsigned i = 0; i < dpm->nwp; i++) {
+	for (unsigned int i = 0; i < dpm->nwp; i++) {
 		struct dpm_wp *dwp = dpm->dwp + i;
 		struct watchpoint *wp = dwp->wp;
 
@@ -910,7 +919,7 @@ int armv8_dpm_write_dirty_registers(struct arm_dpm *dpm, bool bpwp)
 		goto done;
 
 	/* check everything except our scratch register R0 */
-	for (unsigned i = 1; i < cache->num_regs; i++) {
+	for (unsigned int i = 1; i < cache->num_regs; i++) {
 		struct arm_reg *r;
 
 		/* skip non-existent */
@@ -982,7 +991,7 @@ static int armv8_dpm_read_core_reg(struct target *target, struct reg *r,
 		goto fail;
 
 fail:
-	/* (void) */ dpm->finish(dpm);
+	dpm->finish(dpm);
 	return retval;
 }
 
@@ -1038,7 +1047,7 @@ static int armv8_dpm_full_context(struct target *target)
 		 * Pick some mode with unread registers and read them all.
 		 * Repeat until done.
 		 */
-		for (unsigned i = 0; i < cache->num_regs; i++) {
+		for (unsigned int i = 0; i < cache->num_regs; i++) {
 			struct arm_reg *r;
 
 			if (!cache->reg_list[i].exist || cache->reg_list[i].valid)
@@ -1076,7 +1085,7 @@ static int armv8_dpm_full_context(struct target *target)
 	} while (did_read);
 
 	retval = armv8_dpm_modeswitch(dpm, ARM_MODE_ANY);
-	/* (void) */ dpm->finish(dpm);
+	dpm->finish(dpm);
 done:
 	return retval;
 }
@@ -1166,7 +1175,7 @@ static int dpmv8_add_breakpoint(struct target *target, struct breakpoint *bp)
 	if (bp->type == BKPT_SOFT)
 		LOG_DEBUG("using HW bkpt, not SW...");
 
-	for (unsigned i = 0; i < dpm->nbp; i++) {
+	for (unsigned int i = 0; i < dpm->nbp; i++) {
 		if (!dpm->dbp[i].bp) {
 			retval = dpmv8_bpwp_setup(dpm, &dpm->dbp[i].bpwp,
 					bp->address, bp->length);
@@ -1185,7 +1194,7 @@ static int dpmv8_remove_breakpoint(struct target *target, struct breakpoint *bp)
 	struct arm_dpm *dpm = arm->dpm;
 	int retval = ERROR_COMMAND_SYNTAX_ERROR;
 
-	for (unsigned i = 0; i < dpm->nbp; i++) {
+	for (unsigned int i = 0; i < dpm->nbp; i++) {
 		if (dpm->dbp[i].bp == bp) {
 			dpm->dbp[i].bp = NULL;
 			dpm->dbp[i].bpwp.dirty = true;
@@ -1199,7 +1208,7 @@ static int dpmv8_remove_breakpoint(struct target *target, struct breakpoint *bp)
 	return retval;
 }
 
-static int dpmv8_watchpoint_setup(struct arm_dpm *dpm, unsigned index_t,
+static int dpmv8_watchpoint_setup(struct arm_dpm *dpm, unsigned int index_t,
 	struct watchpoint *wp)
 {
 	int retval;
@@ -1207,7 +1216,7 @@ static int dpmv8_watchpoint_setup(struct arm_dpm *dpm, unsigned index_t,
 	uint32_t control;
 
 	/* this hardware doesn't support data value matching or masking */
-	if (wp->value || wp->mask != ~(uint32_t)0) {
+	if (wp->mask != WATCHPOINT_IGNORE_DATA_VALUE_MASK) {
 		LOG_DEBUG("watchpoint values and masking not supported");
 		return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 	}
@@ -1242,7 +1251,7 @@ static int dpmv8_add_watchpoint(struct target *target, struct watchpoint *wp)
 	int retval = ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 
 	if (dpm->bpwp_enable) {
-		for (unsigned i = 0; i < dpm->nwp; i++) {
+		for (unsigned int i = 0; i < dpm->nwp; i++) {
 			if (!dpm->dwp[i].wp) {
 				retval = dpmv8_watchpoint_setup(dpm, i, wp);
 				break;
@@ -1259,7 +1268,7 @@ static int dpmv8_remove_watchpoint(struct target *target, struct watchpoint *wp)
 	struct arm_dpm *dpm = arm->dpm;
 	int retval = ERROR_COMMAND_SYNTAX_ERROR;
 
-	for (unsigned i = 0; i < dpm->nwp; i++) {
+	for (unsigned int i = 0; i < dpm->nwp; i++) {
 		if (dpm->dwp[i].wp == wp) {
 			dpm->dwp[i].wp = NULL;
 			dpm->dwp[i].bpwp.dirty = true;
@@ -1475,7 +1484,7 @@ int armv8_dpm_initialize(struct arm_dpm *dpm)
 {
 	/* Disable all breakpoints and watchpoints at startup. */
 	if (dpm->bpwp_disable) {
-		unsigned i;
+		unsigned int i;
 
 		for (i = 0; i < dpm->nbp; i++) {
 			dpm->dbp[i].bpwp.number = i;

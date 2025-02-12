@@ -375,7 +375,7 @@ static int msp432_init(struct flash_bank *bank)
 	buf_set_u32(reg_params[0].value, 0, 32, ALGO_STACK_POINTER_ADDR);
 
 	/* Begin executing the flash helper algorithm */
-	retval = target_start_algorithm(target, 0, 0, 1, reg_params,
+	retval = target_start_algorithm(target, 0, NULL, 1, reg_params,
 				algo_entry_addr, 0, &msp432_bank->armv7m_info);
 	destroy_reg_param(&reg_params[0]);
 	if (retval != ERROR_OK) {
@@ -937,7 +937,7 @@ static int msp432_probe(struct flash_bank *bank)
 
 	if (is_main && MSP432P4 == msp432_bank->family_type) {
 		/* Create the info flash bank needed by MSP432P4 variants */
-		struct flash_bank *info = calloc(sizeof(struct flash_bank), 1);
+		struct flash_bank *info = calloc(1, sizeof(struct flash_bank));
 		if (!info)
 			return ERROR_FAIL;
 

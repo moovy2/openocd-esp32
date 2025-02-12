@@ -37,7 +37,6 @@ class ApptraceTestsImpl:
         pass
 
     def test_apptrace_dest_tcp(self):
-        self.select_sub_test(503)
         self.add_bp('raw_trace_log_done')
         trace_src = 'tcp://localhost:53535'
         reader = reader_create(trace_src, 1.0)
@@ -59,13 +58,12 @@ class ApptraceTestsImpl:
             self.assertEqual(line, "[%d %s]\n" % (i, " " * (i * 20)))
 
     def test_apptrace_autostop(self):
-        self.select_sub_test(504)
         trace_file = tempfile.NamedTemporaryFile(delete=False)
         trace_file_name = trace_file.name
         trace_file.close()
         trace_src = 'file://%s' % trace_file_name
         reader = reader_create(trace_src, 1.0)
-        # 0 ms poll period, stop when 9000 bytes are received or due to 5 s timeout
+        # 0 ms poll period, stop when 10000 bytes are received or due to 5 s timeout
         self.oocd.apptrace_start("%s 0 10000 5" % trace_src)
         self.resume_exec()
         self.oocd.apptrace_wait_stop(tmo=30)
@@ -80,20 +78,18 @@ class ApptraceTestsImpl:
             self.assertEqual(line, "[%d %s]\n" % (i, " " * (i * 20)))
         os.remove(trace_file_name)
 
+    @skip_for_chip(['esp32'], "skipped - OCD-1047")
     def test_apptrace_reset(self):
         """
             This test checks that apptracing continue to work if target resets between start and stop
         """
-        self.select_sub_test(505)
         trace_file = tempfile.NamedTemporaryFile(delete=False)
         trace_file_name = trace_file.name
         trace_file.close()
         trace_src = 'file://%s' % trace_file_name
         reader = reader_create(trace_src, 1.0)
-        # 10 ms poll period, stop when 800 bytes are received or due to 10 s timeout
-        poll_period_ms = 0 # 10ms period doesn't work for ESP32. Why?
-        if testee_info.chip == "esp32c6" or testee_info.chip == "esp32h2":
-            poll_period_ms = 10 # Check why we need a delay during poll.OCD-717
+        # 0 ms poll period, stop when 800 bytes are received or due to 10 s timeout
+        poll_period_ms = 0
         self.oocd.apptrace_start("%s %d 800 10" % (trace_src, poll_period_ms))
         self.resume_exec()
         sleep(1) #  let it works some time
@@ -101,31 +97,34 @@ class ApptraceTestsImpl:
         self.gdb.target_reset()
 
         lines_before_reset = []
+        get_logger().debug('lines_before_reset:')
         while True:
             try:
                 line = reader.readline()
+                get_logger().debug('%s', line)
                 if (len(line)):
                     lines_before_reset.append(line)
             except ReaderTimeoutError:
                 break
 
-        self.gdb.add_bp('app_main')
+        self.add_bp('app_main')
         self.run_to_bp(dbg.TARGET_STOP_REASON_BP, 'app_main')
-        self.select_sub_test(505)
+        self.select_sub_test(self.id())
         self.resume_exec()
         sleep(2) #  let it works some time
         self.oocd.apptrace_stop();
         lines_after_reset = []
+        get_logger().debug('lines_after_reset:')
         while True:
             try:
                 line = reader.readline()
+                get_logger().debug('%s', line)
                 if (len(line)):
                     lines_after_reset.append(line)
             except ReaderTimeoutError:
                 break
         reader.cleanup()
         os.remove(trace_file_name)
-
         # compare first 5 lines. But before that make sure first line includes number zero
         self.assertEqual(lines_before_reset[0].rstrip().split('#')[1], '0')
         self.assertEqual(lines_before_reset[:5], lines_after_reset[:5])
@@ -162,6 +161,10 @@ class ApptraceTestsDual(ApptraceTestAppTestsDual, ApptraceTestsImpl):
     def tearDown(self):
         ApptraceTestAppTestsDual.tearDown(self)
         ApptraceTestsImpl.tearDown(self)
+
+    @skip_for_chip_and_ver(['5.3'], ['esp32p4'], "skipped - OCD-1052")
+    def test_apptrace_dest_tcp(self):
+        super(ApptraceTestAppTestsDual, self).test_apptrace_dest_tcp()
 
 class ApptraceTestsSingle(ApptraceTestAppTestsSingle, ApptraceTestsImpl):
     """ Test cases via GDB in single core mode

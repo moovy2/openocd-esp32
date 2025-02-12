@@ -40,7 +40,6 @@ def _create_file_reader():
 ########################################################################
 #                         TESTS IMPLEMENTATION                         #
 ########################################################################
-@skip_for_chip(['esp32s3'])
 class BaseTracingTestsImpl:
     """ Test cases which are common for dual and single core modes
     """
@@ -56,9 +55,6 @@ class BaseTracingTestsImpl:
         trace_src,self.reader = _create_file_reader()
         if not self.reader:
             self.fail("Failed to create trace reader!")
-        if testee_info.idf_ver < IdfVersion.fromstr('5.0'):
-            # old style trace source URL
-            trace_src = trace_src[len('file://'):]
         test_func(trace_src)
 
     def _start_tracing(self, trace_src):
@@ -109,7 +105,6 @@ class BaseTracingTestsImpl:
             6) Resume target, wait for the third breakpoint to hit and stop tracing.
             7) Check collected log messages.
         """
-        self.select_sub_test(501)
         self.add_bp('_trace_test_log_continuous_start')
         self.add_bp('_trace_test_log_continuous_end')
         self.add_bp('_trace_test_log_continuous_stop')
@@ -152,7 +147,6 @@ class BaseTracingTestsImpl:
             6) Resume target, wait for the third breakpoint to hit and stop tracing.
             7) Check collected log messages and heap API calls.
         """
-        self.select_sub_test(500)
         self.add_bp('heap_trace_start')
         self.add_bp('heap_trace_stop')
         self.add_bp('_do_trace_test_heap_log_end')
@@ -198,7 +192,7 @@ class BaseTracingTestsImpl:
                 # every alloc has unique size
                 for t in self.tasks_test_data:
                     if len(self.tasks_test_data[t]['leaks']) > 0 and self.tasks_test_data[t]['leaks'][0]['sz'] == alloc.size:
-                        if testee_info.arch == "riscv32":
+                        if testee_info.arch == "riscv32" or testee_info.idf_ver > IdfVersion.fromstr('5.0'):
                             # skip backtrace check for RISCV
                             self.tasks_test_data[t]['leaks'].pop(0)
                             alloc_valid = True
@@ -223,7 +217,6 @@ class BaseTracingTestsImpl:
     def test_heap_log_from_file(self):
         self._test_trace_from_file(self._do_test_heap_log)
 
-@skip_for_chip(['esp32s3'])
 class SysViewTracingTestsImpl(BaseTracingTestsImpl):
     """ Test cases which are common for dual and single core modes
     """
@@ -351,7 +344,6 @@ class SysViewTracingTestsImpl(BaseTracingTestsImpl):
         if self.test_tasks_num > 1:
             irq_ref_data['TG1_T0_LEVEL'] = {'freq': 1.0/0.5, 'core': 1}
 
-        self.select_sub_test(502)
         self.resume_exec()
         # collect trace
         time.sleep(3.0)
@@ -404,11 +396,11 @@ class SysViewTracingTestsImpl(BaseTracingTestsImpl):
             freq_dev = 100*(task_ref_data[name]['freq'] - task_run_data[name]['run_count']/iv)/task_ref_data[name]['freq']
             self.assertTrue(freq_dev <= 10) # max event's freq deviation (due to measurement error) is 10%
         for name in irq_run_data:
-            if ((testee_info.idf_ver < IdfVersion.fromstr('5.0')) or (name == "SysTick")):
+            if name == "SysTick":
                 print_run_data('IRQ "%s"' % name, irq_run_data[name], iv)
                 freq_dev = 100*(irq_ref_data[name]['freq'] - irq_run_data[name]['run_count']/iv)/irq_ref_data[name]['freq']
                 self.assertTrue(freq_dev <= 10) # max event's freq deviation (due to measurement error) is 10%
-@skip_for_chip(['esp32s3'])
+
 class SysViewMcoreTracingTestsImpl(BaseTracingTestsImpl):
     """ Test cases which are common for dual and single core modes
     """
@@ -500,7 +492,7 @@ class SysViewMcoreTracingTestsImpl(BaseTracingTestsImpl):
 ########################################################################
 #              TESTS DEFINITION WITH SPECIAL TESTS                     #
 ########################################################################
-
+@skip_for_chip(['esp32s3'], "skipped - OCD-992")
 class SysViewTraceTestAppTestsDual(DebuggerGenericTestAppTests):
     """ Base class to run tests which use gcov test app in dual core mode
     """
@@ -521,7 +513,6 @@ class SysViewTraceTestAppTestsSingle(DebuggerGenericTestAppTests):
         self.test_app_cfg.build_dir = os.path.join('builds', 'svtrace_single')
         self.test_tasks_num = 1
         self.cores_num = 1
-
 
 class SysViewTracingTestsDual(SysViewTraceTestAppTestsDual, SysViewTracingTestsImpl):
     """ Test cases via GDB in dual core mode
@@ -545,7 +536,6 @@ class SysViewTracingTestsSingle(SysViewTraceTestAppTestsSingle, SysViewTracingTe
     def tearDown(self):
         SysViewTraceTestAppTestsSingle.tearDown(self)
         SysViewTracingTestsImpl.tearDown(self)
-
 
 class SysViewMcoreTracingTestsDual(SysViewTraceTestAppTestsDual, SysViewMcoreTracingTestsImpl):
     """ Test cases via GDB in dual core mode

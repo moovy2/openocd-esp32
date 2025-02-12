@@ -14,7 +14,6 @@
 #include <helper/time_support.h>
 #include <jtag/jtag.h>
 #include "target/target.h"
-#include "target/target_type.h"
 #include "rtos.h"
 #include "helper/log.h"
 #include "helper/types.h"
@@ -209,6 +208,57 @@ static const struct freertos_params freertos_params_list[] = {
 		NULL,
 		rtos_freertos_riscv_pick_stacking_info,	/* fn to pick stacking_info */
 	},
+	{
+		"esp32c61",				/* target_name */
+		4,						/* thread_count_width; */
+		4,						/* pointer_width; */
+		16,						/* list_next_offset; */
+		8,						/* list_end_offset; */
+		20,						/* list_width; */
+		8,						/* list_elem_next_offset; */
+		12,						/* list_elem_content_offset */
+		0,						/* thread_stack_offset; */
+		52,						/* thread_name_offset; */
+		4,						/* thread_counter_width */
+		NULL,					/* stacking_info */
+		NULL,
+		NULL,
+		rtos_freertos_riscv_pick_stacking_info,	/* fn to pick stacking_info */
+	},
+	{
+		"esp32p4",				/* target_name */
+		4,						/* thread_count_width; */
+		4,						/* pointer_width; */
+		16,						/* list_next_offset; */
+		8,						/* list_end_offset; */
+		20,						/* list_width; */
+		8,						/* list_elem_next_offset; */
+		12,						/* list_elem_content_offset */
+		0,						/* thread_stack_offset; */
+		52,						/* thread_name_offset; */
+		4,						/* thread_counter_width */
+		NULL,					/* stacking_info */
+		NULL,
+		NULL,
+		rtos_freertos_riscv_pick_stacking_info,	/* fn to pick stacking_info */
+	},
+	{
+		"esp32c5",				/* target_name */
+		4,						/* thread_count_width; */
+		4,						/* pointer_width; */
+		16,						/* list_next_offset; */
+		8,						/* list_end_offset; */
+		20,						/* list_width; */
+		8,						/* list_elem_next_offset; */
+		12,						/* list_elem_content_offset */
+		0,						/* thread_stack_offset; */
+		52,						/* thread_name_offset; */
+		4,						/* thread_counter_width */
+		NULL,					/* stacking_info */
+		NULL,
+		NULL,
+		rtos_freertos_riscv_pick_stacking_info,	/* fn to pick stacking_info */
+	},
 };
 
 #define FREERTOS_NUM_PARAMS ARRAY_SIZE(freertos_params_list)
@@ -273,6 +323,7 @@ enum freertos_symbol_values {
 	FREERTOS_VAL_UX_TASK_NUMBER = 13,
 	FREERTOS_VAL_ESP_OPENOCD_PARAMS = 14,
 	FREERTOS_VAL_PX_CURRENT_TCBs = 15,
+	FREERTOS_VAL_PORT_X_SCHEDULER_RUNNING = 16,
 };
 
 struct symbols {
@@ -292,11 +343,12 @@ static const struct symbols freertos_symbol_list[] = {
 	{ "xSuspendedTaskList", true },	/* Only if INCLUDE_vTaskSuspend */
 	{ "uxCurrentNumberOfTasks", false },
 	{ "uxTopUsedPriority", true },	/* Unavailable since v7.5.3 */
-	{ "xSchedulerRunning", false },
+	{ "xSchedulerRunning", true },
 	{ "port_interruptNesting", true },
 	{ "uxTaskNumber", false },
 	{ "FreeRTOS_openocd_params", true },	/* Only if ESP_PLATFORM defined */
 	{ "pxCurrentTCBs", true },	/* Available since ESP-IDF v5.0 */
+	{ "port_xSchedulerRunning", true },
 	{ NULL, false }
 };
 
@@ -323,7 +375,7 @@ static int freertos_read_esp_symbol_table(struct rtos *rtos, int index, uint8_t 
 	assert(val);
 
 	if (!rtos_data->esp_symbols) {
-		if (!rtos->symbols[FREERTOS_VAL_ESP_OPENOCD_PARAMS].address)
+		if (!rtos->symbols || !rtos->symbols[FREERTOS_VAL_ESP_OPENOCD_PARAMS].address)
 			return ERROR_FAIL;
 
 		LOG_DEBUG(
@@ -340,7 +392,7 @@ static int freertos_read_esp_symbol_table(struct rtos *rtos, int index, uint8_t 
 		if (retval != ERROR_OK)
 			return retval;
 
-		if (table_size == 0) {
+		if (table_size == 0 || table_size > ESP_FREERTOS_DEBUG_TABLE_END) {
 			LOG_WARNING("esp_symbols table size (%d) is not valid!", table_size);
 			return ERROR_FAIL;
 		}
@@ -373,7 +425,7 @@ static int freertos_read_esp_symbol_table(struct rtos *rtos, int index, uint8_t 
 	return ERROR_OK;
 }
 
-uint8_t freertos_get_thread_name_offset(struct rtos *rtos)
+static uint8_t freertos_get_thread_name_offset(struct rtos *rtos)
 {
 	struct freertos_data *rtos_data = (struct freertos_data *)rtos->rtos_specific_params;
 
@@ -384,7 +436,7 @@ uint8_t freertos_get_thread_name_offset(struct rtos *rtos)
 	return thread_name_offset;
 }
 
-uint8_t freertos_get_thread_stack_offset(struct rtos *rtos)
+static uint8_t freertos_get_thread_stack_offset(struct rtos *rtos)
 {
 	struct freertos_data *rtos_data = (struct freertos_data *)rtos->rtos_specific_params;
 
@@ -397,7 +449,7 @@ uint8_t freertos_get_thread_stack_offset(struct rtos *rtos)
 	return thread_stack_offset;
 }
 
-uint8_t freertos_get_ux_top_used_priority(struct rtos *rtos)
+static uint8_t freertos_get_ux_top_used_priority(struct rtos *rtos)
 {
 	uint32_t ux_top_used_priority = 0;
 
@@ -415,7 +467,7 @@ uint8_t freertos_get_ux_top_used_priority(struct rtos *rtos)
 	return retval == ERROR_OK ? ux_top_used_priority : 0;
 }
 
-symbol_address_t freertos_current_tcb_address(struct rtos *rtos)
+static symbol_address_t freertos_current_tcb_address(struct rtos *rtos)
 {
 	if (rtos->symbols[FREERTOS_VAL_PX_CURRENT_TCB].address)
 		return rtos->symbols[FREERTOS_VAL_PX_CURRENT_TCB].address;
@@ -974,7 +1026,8 @@ static int freertos_update_threads(struct rtos *rtos)
 		uxTaskNumber);
 
 	if (uxTaskNumber < rtos_data->thread_counter) {
-		LOG_ERROR("FreeRTOS uxTaskNumber seems to be corrupted!");
+		LOG_TARGET_ERROR(target, "FreeRTOS uxTaskNumber seems to be corrupted! (%" PRId64 " - %" PRId32 ")",
+			uxTaskNumber, rtos_data->thread_counter);
 		return ERROR_FAIL;
 	}
 
@@ -1007,16 +1060,18 @@ static int freertos_update_threads(struct rtos *rtos)
 
 	/* read scheduler running */
 	uint32_t scheduler_running;
-	retval = target_read_u32(rtos->target,
-		rtos->symbols[FREERTOS_VAL_X_SCHEDULER_RUNNING].address,
-		&scheduler_running);
+	symbol_address_t scheduler_running_sym_address = rtos->symbols[FREERTOS_VAL_X_SCHEDULER_RUNNING].address;
+	if (!scheduler_running_sym_address)
+		scheduler_running_sym_address = rtos->symbols[FREERTOS_VAL_PORT_X_SCHEDULER_RUNNING].address;
+
+	retval = target_read_u32(rtos->target, scheduler_running_sym_address, &scheduler_running);
 	if (retval != ERROR_OK) {
-		LOG_ERROR("Error reading FreeRTOS scheduler state");
+		LOG_TARGET_ERROR(target, "Error reading FreeRTOS scheduler state");
 		return retval;
 	}
-	LOG_DEBUG("FreeRTOS: Read xSchedulerRunning at 0x%" PRIx64 ", value 0x%" PRIx32,
-		rtos->symbols[FREERTOS_VAL_X_SCHEDULER_RUNNING].address,
-		scheduler_running);
+	LOG_TARGET_DEBUG(target, "FreeRTOS: Read xSchedulerRunning at 0x%" PRIx64 ", value 0x%" PRIx32,
+			scheduler_running_sym_address,
+			scheduler_running);
 
 	if ((thread_list_size == 0) || (rtos->current_thread == 0) || !scheduler_running) {
 		/* Either : No RTOS threads - there is always at least the current execution though
@@ -1117,7 +1172,7 @@ static int freertos_get_current_thread_registers(struct rtos *rtos, int64_t thre
 	/* registers for threads currently running on CPUs are not on task's stack and
 	 * should retrieved from reg caches via target_get_gdb_reg_list */
 	struct reg **gdb_reg_list;
-	retval = target_get_gdb_reg_list(current_target, &gdb_reg_list, num_regs,
+	retval = target_get_gdb_reg_list_noread(current_target, &gdb_reg_list, num_regs,
 		reg_class);
 	if (retval != ERROR_OK) {
 		LOG_ERROR("target_get_gdb_reg_list failed %d", retval);
@@ -1329,8 +1384,7 @@ static int freertos_post_reset_cleanup(struct target *target)
 	struct freertos_data *rtos_data =
 		(struct freertos_data *)target->rtos->rtos_specific_params;
 
-	if ((target->rtos->symbols != NULL) &&
-		(target->rtos->symbols[FREERTOS_VAL_UX_CURRENT_NUMBER_OF_TASKS].address != 0)) {
+	if (target->rtos->symbols && target->rtos->symbols[FREERTOS_VAL_UX_CURRENT_NUMBER_OF_TASKS].address != 0) {
 		int ret = target_buffer_write_uint(target,
 			target->rtos->symbols[FREERTOS_VAL_UX_CURRENT_NUMBER_OF_TASKS].address,
 			rtos_data->params->thread_count_width,
@@ -1415,7 +1469,7 @@ static int freertos_create(struct target *target)
 
 	size_t i = 0;
 	while ((i < FREERTOS_NUM_PARAMS) &&
-		(0 != strcmp(freertos_params_list[i].target_name, target->type->name))) {
+		(strcmp(freertos_params_list[i].target_name, target_type_name(target)) != 0)) {
 		i++;
 	}
 	if (i >= FREERTOS_NUM_PARAMS) {

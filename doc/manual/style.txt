@@ -97,6 +97,21 @@ OpenOCD project.
       x = 0;
   }
   @endcode
+- on <tt> if </tt> statements where the condition is split among multiple
+  lines, increase the indentation of the condition to prevent it to match
+  to the indentation of the <tt> then </tt> block due to length of 'if ('
+  being same of the TAB width of 4 characters. Use:
+  @code
+  if (CMD_ARGC < 3
+          || CMD_ARGC > 8)
+      return ERROR_COMMAND_SYNTAX_ERROR;
+  @endcode
+  instead of:
+  @code
+  if (CMD_ARGC < 3 ||
+      CMD_ARGC > 8)
+      return ERROR_COMMAND_SYNTAX_ERROR;
+  @endcode
 
 Finally, try to avoid lines of code that are longer than 72-80 columns:
 
@@ -111,8 +126,8 @@ Finally, try to avoid lines of code that are longer than 72-80 columns:
 @section stylenames Naming Rules
 
 - most identifiers must use lower-case letters (and digits) only.
-  - macros must use upper-case letters (and digits) only.
-  - OpenOCD identifiers should NEVER use @c MixedCaps.
+  - macros and enumerators must use upper-case letters (and digits) only.
+  - OpenOCD identifiers should NEVER use @c MixedCaps, aka @c CamelCase.
 - @c typedef names must end with the '_t' suffix.
   - This should be reserved for types that should be passed by value.
   - Do @b not mix the typedef keyword with @c struct.

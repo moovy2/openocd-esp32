@@ -17,22 +17,6 @@
 #include "helper/binarybuffer.h"
 #include "server/gdb_server.h"
 
-/* RTOSs */
-extern const struct rtos_type freertos_rtos;
-extern const struct rtos_type threadx_rtos;
-extern const struct rtos_type ecos_rtos;
-extern const struct rtos_type linux_rtos;
-extern const struct rtos_type chibios_rtos;
-extern const struct rtos_type chromium_ec_rtos;
-extern const struct rtos_type embkernel_rtos;
-extern const struct rtos_type mqx_rtos;
-extern const struct rtos_type ucos_iii_rtos;
-extern const struct rtos_type nuttx_rtos;
-extern const struct rtos_type hwthread_rtos;
-extern const struct rtos_type riot_rtos;
-extern const struct rtos_type zephyr_rtos;
-extern const struct rtos_type rtkernel_rtos;
-
 static const struct rtos_type *rtos_types[] = {
 	&threadx_rtos,
 	&freertos_rtos,
@@ -53,8 +37,6 @@ static const struct rtos_type *rtos_types[] = {
 };
 
 static int rtos_try_next(struct target *target);
-
-int rtos_thread_packet(struct connection *connection, const char *packet, int packet_size);
 
 int rtos_smp_init(struct target *target)
 {
@@ -100,6 +82,7 @@ static void os_free(struct target *target)
 		return;
 
 	free(target->rtos->symbols);
+	rtos_free_threadlist(target->rtos);
 	free(target->rtos);
 
 	/* For ESP chips there is one rtos instance for both target */
@@ -133,7 +116,7 @@ int rtos_create(struct jim_getopt_info *goi, struct target *target)
 	Jim_Obj *res;
 	int e;
 
-	if (!goi->isconfigure && goi->argc != 0) {
+	if (!goi->is_configure && goi->argc != 0) {
 		Jim_WrongNumArgs(goi->interp, goi->argc, goi->argv, "NO PARAMS");
 		return JIM_ERR;
 	}
@@ -339,7 +322,7 @@ int rtos_qsymbol(struct connection *connection, char const *packet, int packet_s
 	reply_len += 2 * strlen(next_suffix);            /* hexify(..., next_suffix, ...) */
 	reply_len += 1;                                  /* Terminating NUL */
 	if (reply_len > sizeof(reply)) {
-		LOG_ERROR("ERROR: RTOS symbol '%s%s' name is too long for GDB!", next_sym->symbol_name, next_suffix);
+		LOG_ERROR("RTOS symbol '%s%s' name is too long for GDB", next_sym->symbol_name, next_suffix);
 		goto done;
 	}
 
@@ -358,7 +341,8 @@ done:
 	return rtos_detected;
 }
 
-int get_thread_number_by_id(struct target *target, threadid_t threadid) {
+static int get_thread_number_by_id(struct target *target, threadid_t threadid)
+{
 	if ((target->rtos) && (target->rtos->thread_details)) {
 		for (int thread_num = 0; thread_num < target->rtos->thread_count; thread_num++) {
 			if (target->rtos->thread_details[thread_num].threadid == threadid &&
@@ -421,7 +405,7 @@ int rtos_thread_packet(struct connection *connection, char const *packet, int pa
 		return ERROR_OK;
 	} else if (strncmp(packet, "qSymbol", 7) == 0) {
 		if (rtos_qsymbol(connection, packet, packet_size) == 1) {
-			if (target->rtos_auto_detect == true) {
+			if (target->rtos_auto_detect) {
 				target->rtos_auto_detect = false;
 				target->rtos->type->create(target);
 			}

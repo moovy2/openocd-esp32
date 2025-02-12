@@ -51,24 +51,23 @@ static const char openocd_startup_tcl[] = {
 };
 
 /* Give scripts and TELNET a way to find out what version this is */
-static int jim_version_command(Jim_Interp *interp, int argc,
-	Jim_Obj * const *argv)
+COMMAND_HANDLER(handler_version_command)
 {
-	if (argc > 2)
-		return JIM_ERR;
-	const char *str = "";
-	char *version_str;
-	version_str = OPENOCD_VERSION;
+	char *version_str = OPENOCD_VERSION;
 
-	if (argc == 2)
-		str = Jim_GetString(argv[1], NULL);
+	if (CMD_ARGC > 1)
+		return ERROR_COMMAND_SYNTAX_ERROR;
 
-	if (strcmp("git", str) == 0)
+	if (CMD_ARGC == 1) {
+		if (strcmp("git", CMD_ARGV[0]))
+			return ERROR_COMMAND_ARGUMENT_INVALID;
+
 		version_str = GITVERSION;
+	}
 
-	Jim_SetResult(interp, Jim_NewStringObj(interp, version_str, -1));
+	command_print(CMD, "%s", version_str);
 
-	return JIM_OK;
+	return ERROR_OK;
 }
 
 static int log_target_callback_event_handler(struct target *target,
@@ -194,9 +193,10 @@ COMMAND_HANDLER(handle_add_script_search_dir_command)
 static const struct command_registration openocd_command_handlers[] = {
 	{
 		.name = "version",
-		.jim_handler = jim_version_command,
+		.handler = handler_version_command,
 		.mode = COMMAND_ANY,
 		.help = "show program version",
+		.usage = "[git]",
 	},
 	{
 		.name = "noinit",
@@ -258,7 +258,7 @@ static struct command_context *setup_command_handler(Jim_Interp *interp)
 		&arm_tpiu_swo_register_commands,
 		NULL
 	};
-	for (unsigned i = 0; command_registrants[i]; i++) {
+	for (unsigned int i = 0; command_registrants[i]; i++) {
 		int retval = (*command_registrants[i])(cmd_ctx);
 		if (retval != ERROR_OK) {
 			command_done(cmd_ctx);
@@ -375,15 +375,17 @@ int openocd_main(int argc, char *argv[])
 
 	log_exit();
 
+#if USE_GCOV
+	/* Always explicitly dump coverage data before terminating.
+	 * Otherwise coverage would not be dumped when exit_on_signal occurs. */
+	void __gcov_dump(void);
+	__gcov_dump();
+#endif
+
 	if (ret == ERROR_FAIL)
 		return EXIT_FAILURE;
-#if !BUILD_GCOV
-	/* We want openocd to exit normally in order to 
-	generate coverage and profiling data. Killing openocd with
-	signals prevents data generation */
 	else if (ret != ERROR_OK)
 		exit_on_signal(ret);
-#endif
 
 	return ret;
 }

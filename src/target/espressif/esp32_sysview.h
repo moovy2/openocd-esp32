@@ -8,17 +8,8 @@
 #ifndef OPENOCD_TARGET_ESP32_SYSVIEW_H
 #define OPENOCD_TARGET_ESP32_SYSVIEW_H
 
-typedef enum {
-	SEGGER_SYSVIEW_COMMAND_ID_START = 1,
-	SEGGER_SYSVIEW_COMMAND_ID_STOP,
-	SEGGER_SYSVIEW_COMMAND_ID_GET_SYSTIME,
-	SEGGER_SYSVIEW_COMMAND_ID_GET_TASKLIST,
-	SEGGER_SYSVIEW_COMMAND_ID_GET_SYSDESC,
-	SEGGER_SYSVIEW_COMMAND_ID_GET_NUMMODULES,
-	SEGGER_SYSVIEW_COMMAND_ID_GET_MODULEDESC,
-	/* Extended commands: Commands >= 128 have a second parameter */
-	SEGGER_SYSVIEW_COMMAND_ID_GET_MODULE = 128
-} SEGGER_SYSVIEW_COMMAND_ID;
+#include <stdint.h>
+#include "esp32_apptrace.h"
 
 struct esp32_sysview_cmd_data {
 	/* Should be the first field. Generic apptrace command handling code accesses it */
@@ -32,8 +23,8 @@ struct esp32_sysview_cmd_data {
 
 struct esp32_apptrace_cmd_ctx;
 
-int esp32_sysview_cmd_init(struct target *target,
-	struct esp32_apptrace_cmd_ctx *cmd_ctx,
+int esp32_sysview_cmd_init(struct esp32_apptrace_cmd_ctx *cmd_ctx,
+	struct command_invocation *cmd,
 	int mode,
 	bool mcore_format,
 	const char **argv,
