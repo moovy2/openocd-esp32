@@ -434,18 +434,21 @@ static int esp32s2_poll(struct target *target)
 		if (old_state == TARGET_DEBUG_RUNNING) {
 			target_call_event_callbacks(target, TARGET_EVENT_DEBUG_HALTED);
 		} else {
-			if (esp_xtensa_semihosting(target, &ret) == SEMIHOSTING_HANDLED) {
+			int retval = esp_xtensa_semihosting(target, &ret);
+			if (retval == SEMIHOSTING_HANDLED) {
 				struct esp_xtensa_common *esp_xtensa = target_to_esp_xtensa(target);
 				if (ret == ERROR_OK && esp_xtensa->semihost.need_resume) {
 					esp_xtensa->semihost.need_resume = false;
-					/* Resume xtensa_resume will handle BREAK instruction. */
-					ret = target_resume(target, 1, 0, 1, 0);
+					/* BREAK instruction will be handled in the xtensa_semihosting_post_result. */
+					ret = target_resume(target, 1, 0, 0, 0);
 					if (ret != ERROR_OK) {
 						LOG_ERROR("Failed to resume target");
 						return ret;
 					}
 				}
 				return ret;
+			} else if (retval == SEMIHOSTING_WAITING) {
+			   /* nothing to do. Don’t return to allow sending halted event */
 			}
 			esp32s2_on_halt(target);
 			target_call_event_callbacks(target, TARGET_EVENT_HALTED);
@@ -499,7 +502,7 @@ static const char *esp32s2_reset_reason_str(int coreid, enum esp32s2_reset_reaso
 	return "Unknown reset cause";
 }
 
-int esp32s2_reset_reason_fetch(struct target *target, int *rsn_id, const char **rsn_str)
+static int esp32s2_reset_reason_fetch(struct target *target, int *rsn_id, const char **rsn_str)
 {
 	uint32_t rsn_val;
 
@@ -541,8 +544,9 @@ static const struct xtensa_power_ops esp32s2_pwr_ops = {
 };
 
 static const struct esp_flash_breakpoint_ops esp32s2_spec_brp_ops = {
+	.breakpoint_prepare = esp_algo_flash_breakpoint_prepare,
 	.breakpoint_add = esp_algo_flash_breakpoint_add,
-	.breakpoint_remove = esp_algo_flash_breakpoint_remove
+	.breakpoint_remove = esp_algo_flash_breakpoint_remove,
 };
 
 static const struct esp_semihost_ops esp32s2_semihost_ops = {
@@ -663,6 +667,7 @@ struct target_type esp32s2_target = {
 
 	.add_watchpoint = xtensa_watchpoint_add,
 	.remove_watchpoint = xtensa_watchpoint_remove,
+	.hit_watchpoint = xtensa_watchpoint_hit,
 
 	.target_create = esp32s2_target_create,
 	.init_target = esp32s2_target_init,

@@ -5,50 +5,53 @@
  *   Copyright (C) 2021 Espressif Systems Ltd.                             *
  ***************************************************************************/
 
-/*
- * Overview
- * --------
- * Like many other flash drivers this one uses special binary program (stub) running on target
- * to perform all operations and communicate to the host. Stub has entry function which accepts
- * variable number of arguments and therefore can handle different flash operation requests.
- * Only the first argument of the stub entry function is mandatory for all operations it must
- * specify the type of flash function to perform (read, write etc.). Actually stub main function
- * is a dispatcher which determines the type of flash operation to perform, retrieves other
- * arguments and calls corresponding handler. In C notation entry function looks like the following:
+/**
+* Overview
+* --------
+* Like many other flash drivers this one uses special binary program (stub) running on target
+* to perform all operations and communicate to the host. Stub has entry function which accepts
+* variable number of arguments and therefore can handle different flash operation requests.
+* Only the first argument of the stub entry function is mandatory for all operations it must
+* specify the type of flash function to perform (read, write etc.). Actually stub main function
+* is a dispatcher which determines the type of flash operation to perform, retrieves other
+* arguments and calls corresponding handler. In C notation entry function looks like the following:
 
- * int stub_main(int cmd, ...);
+* int stub_main(int cmd, ...);
 
- * In general every flash operation consists of the following steps:
- * 1) Stub is loaded to target.
- * 2) Necessary arguments are prepared and stub's main function is called.
- * 3) Stub does the work and returns the result.
+* In general every flash operation consists of the following steps:
+* 1) Stub is loaded to target.
+* 2) Necessary arguments are prepared and stub's main function is called.
+* 3) Stub does the work and returns the result.
 
- * Stub Loading
- * ------------
- * To run stub its code and data sections must be loaded to the target. It is done using working area API.
- * But since code and data address spaces are separated in ESP32 it is necessary to have two configured
- * working areas: one in code address space and another one in data space. So driver allocates chunks
- * in respective pools and writes stub sections to them. It is important that the both stub sections reside
- * at the beginning of respective working areas because stub code is linked as ELF and therefore it is
- * position dependent. So target memory for stub code and data must be allocated first.
+* Stub Loading
+* ------------
+* To execute the stub, the code and data sections need to be loaded onto the target device.
+* This is accomplished using the working area API. In ESP32, the code and data address spaces are separate,
+* but the CPU can read and write memory from both the data bus and the instruction bus.
+* This means that data written from the data bus can be accessed from the instruction bus.
+* However, ESP32 differs from other chips as it maps these buses differently.
+* To address this, the load function in the algorithm will make the necessary adjustments.
+* It is crucial that both the stub code and data sections are located at the beginning of their respective
+* working areas because the stub code is linked as ELF and therefore its position is dependent.
+* Hence, allocating target memory for the stub code and data is the first step in this process.
 
- * Stub Execution
- * --------------
- * Special wrapping code is used to enter and exit the stub's main function. It prepares register arguments
- * before Windowed ABI call to stub entry and upon return from it executes break command to indicate to OpenOCD
- * that operation is finished.
+* Stub Execution
+* --------------
+* Special wrapping code is used to enter and exit the stub's main function. It prepares register arguments
+* before Windowed ABI call to stub entry and upon return from it executes break command to indicate to OpenOCD
+* that operation is finished.
 
- * Flash Data Transfers
- * --------------------
- * To transfer data from/to target a buffer should be allocated at ESP32 side. Also during the data transfer
- * target and host must maintain the state of that buffer (read/write pointers etc.). So host needs to check
- * the state of that buffer periodically and write to or read from it (depending on flash operation type).
- * ESP32 does not support access to its memory via JTAG when it is not halted, so accessing target memory would
- * requires halting the CPUs every time the host needs to check if there are incoming data or free space available
- * in the buffer. This fact can slow down flash write/read operations dramatically. To avoid this flash driver and
- * stub use application level tracing module API to transfer the data in 'non-stop' mode.
- *
- */
+* Flash Data Transfers
+* --------------------
+* To transfer data from/to target a buffer should be allocated at ESP32 side. Also during the data transfer
+* target and host must maintain the state of that buffer (read/write pointers etc.). So host needs to check
+* the state of that buffer periodically and write to or read from it (depending on flash operation type).
+* ESP32 does not support access to its memory via JTAG when it is not halted, so accessing target memory would
+* requires halting the CPUs every time the host needs to check if there are incoming data or free space available
+* in the buffer. This fact can slow down flash write/read operations dramatically. To avoid this flash driver and
+* stub use application level tracing module API to transfer the data in 'non-stop' mode.
+*
+**/
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -58,12 +61,18 @@
 #include <helper/sha256.h>
 #include <helper/binarybuffer.h>
 #include <target/register.h>
+#include <target/xtensa/xtensa.h>
+#include <target/espressif/esp.h>
 #include <helper/time_support.h>
-#include "contrib/loaders/flash/esp/stub_flasher.h"
+#include <helper/align.h>
+#include <target/smp.h>
+#include "contrib/loaders/flash/espressif/stub_flasher.h"
+#include <target/smp.h>
 #include "esp_flash.h"
 
 #define ESP_FLASH_RW_TMO                20000	/* ms */
 #define ESP_FLASH_ERASE_TMO             60000	/* ms */
+#define ESP_FLASH_VERIFY_TMO            30000	/* ms */
 #define ESP_FLASH_MAPS_MAX              2
 
 struct esp_flash_rw_args {
@@ -97,19 +106,22 @@ struct esp_flash_erase_check_args {
 struct esp_flash_bp_op_state {
 	struct working_area *target_buf;
 	struct esp_flash_bank *esp_info;
+	struct esp_flash_breakpoint *sw_bp;
+	size_t num_bps;
 };
 
 #if BUILD_ESP_COMPRESSION
 #include <zlib.h>
-int esp_algo_flash_compress(const uint8_t *in, uint32_t in_len, uint8_t **out, uint32_t *out_len)
+static int esp_algo_flash_compress(const uint8_t *in, uint32_t in_len, uint8_t **out, uint32_t *out_len)
 {
 	z_stream strm;
 	int wbits = -MAX_WBITS;		/*deflate */
 	int level = Z_DEFAULT_COMPRESSION;	/*Z_BEST_SPEED; */
 
-	strm.zalloc = Z_NULL;
-	strm.zfree = Z_NULL;
-	strm.opaque = Z_NULL;
+	/* Don't use Z_NULL to make Sparse tool happy */
+	strm.zalloc = NULL;
+	strm.zfree = NULL;
+	strm.opaque = NULL;
 
 	if (deflateInit2(&strm, level, Z_DEFLATED, wbits, MAX_MEM_LEVEL,
 			Z_DEFAULT_STRATEGY) != Z_OK) {
@@ -161,7 +173,7 @@ int esp_algo_flash_compress(const uint8_t *in, uint32_t in_len, uint8_t **out, u
 	return ERROR_OK;
 }
 #else
-int esp_algo_flash_compress(const uint8_t *in, uint32_t in_len, uint8_t **out, uint32_t *out_len)
+static int esp_algo_flash_compress(const uint8_t *in, uint32_t in_len, uint8_t **out, uint32_t *out_len)
 {
 	return ERROR_FAIL;
 }
@@ -192,8 +204,8 @@ static int esp_algo_calc_hash(const uint8_t *data, size_t datalen, uint8_t *hash
 	return ERROR_OK;
 }
 
-static int esp_algo_flasher_algorithm_init(struct algorithm_run_data *algo,
-	const struct algorithm_hw *stub_hw,
+static int esp_algo_flasher_algorithm_init(struct esp_algorithm_run_data *algo,
+	const struct esp_algorithm_hw *stub_hw,
 	const struct esp_flasher_stub_config *stub_cfg)
 {
 	if (!stub_cfg) {
@@ -204,7 +216,14 @@ static int esp_algo_flasher_algorithm_init(struct algorithm_run_data *algo,
 	memset(algo, 0, sizeof(*algo));
 	algo->hw = stub_hw;
 	algo->reg_args.first_user_param = stub_cfg->first_user_reg_param;
+	algo->image.code_size = stub_cfg->code_sz;
+	algo->image.data_size = stub_cfg->data_sz;
 	algo->image.bss_size = stub_cfg->bss_sz;
+	algo->image.iram_org = stub_cfg->iram_org;
+	algo->image.iram_len = stub_cfg->iram_len;
+	algo->image.dram_org = stub_cfg->dram_org;
+	algo->image.dram_len = stub_cfg->dram_len;
+	algo->image.reverse = stub_cfg->reverse;
 	algo->stub.log_buff_addr = stub_cfg->log_buff_addr;
 	algo->stub.log_buff_size = stub_cfg->log_buff_size;
 	memset(&algo->image.image, 0, sizeof(algo->image.image));
@@ -218,7 +237,7 @@ static int esp_algo_flasher_algorithm_init(struct algorithm_run_data *algo,
 	ret = image_add_section(&algo->image.image,
 		0,
 		stub_cfg->code_sz,
-		IMAGE_ELF_PHF_EXEC,
+		ESP_IMAGE_ELF_PHF_EXEC,
 		stub_cfg->code);
 	if (ret != ERROR_OK) {
 		LOG_ERROR("Failed to create image (%d)!", ret);
@@ -238,13 +257,14 @@ static int esp_algo_flasher_algorithm_init(struct algorithm_run_data *algo,
 }
 
 int esp_algo_flash_init(struct esp_flash_bank *esp_info, uint32_t sec_sz,
-	int (*run_func_image)(struct target *target, struct algorithm_run_data *run,
+	int (*run_func_image)(struct target *target, struct esp_algorithm_run_data *run,
 		uint32_t num_args, ...),
 	bool (*is_irom_address)(target_addr_t addr),
 	bool (*is_drom_address)(target_addr_t addr),
-	const struct esp_flasher_stub_config *(*get_stub)(struct flash_bank *bank),
+	const struct esp_flasher_stub_config *(*get_stub)(struct flash_bank *bank, int cmd),
 	const struct esp_flash_apptrace_hw *apptrace_hw,
-	const struct algorithm_hw *stub_hw)
+	const struct esp_algorithm_hw *stub_hw,
+	bool check_preloaded_binary)
 {
 	esp_info->probed = 0;
 	esp_info->sec_sz = sec_sz;
@@ -257,6 +277,7 @@ int esp_algo_flash_init(struct esp_flash_bank *esp_info, uint32_t sec_sz,
 	esp_info->compression = BUILD_ESP_COMPRESSION;
 	esp_info->apptrace_hw = apptrace_hw;
 	esp_info->stub_hw = stub_hw;
+	esp_info->check_preloaded_binary = check_preloaded_binary;
 
 	return ERROR_OK;
 }
@@ -274,18 +295,21 @@ int esp_algo_flash_protect_check(struct flash_bank *bank)
 int esp_algo_flash_blank_check(struct flash_bank *bank)
 {
 	struct esp_flash_bank *esp_info = bank->driver_priv;
-	struct algorithm_run_data run;
+	struct esp_algorithm_run_data run;
+	const struct esp_flasher_stub_config *stub_cfg = esp_info->get_stub(bank, ESP_STUB_CMD_FLASH_ERASE_CHECK);
+	const uint32_t stack_size = esp_info->stub_log_enabled ?
+		stub_cfg->stack_default_sz * 2 : stub_cfg->stack_default_sz;
 
 	if (bank->target->state != TARGET_HALTED) {
 		LOG_ERROR("Target not halted!");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
-	int ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw, esp_info->get_stub(bank));
+	int ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw, stub_cfg);
 	if (ret != ERROR_OK)
 		return ret;
 
-	run.stack_size = 1300;
+	run.stack_size = stack_size;
 	struct mem_param mp;
 	init_mem_param(&mp, 3 /*3rd usr arg*/, bank->num_sectors /*size in bytes*/, PARAM_IN);
 	run.mem_args.params = &mp;
@@ -315,50 +339,27 @@ int esp_algo_flash_blank_check(struct flash_bank *bank)
 	return ret;
 }
 
-static uint32_t esp_algo_flash_get_size(struct flash_bank *bank)
-{
-	struct esp_flash_bank *esp_info = bank->driver_priv;
-	uint32_t size = 0;
-	struct algorithm_run_data run;
-
-	int ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw, esp_info->get_stub(bank));
-	if (ret != ERROR_OK)
-		return ret;
-
-	run.stack_size = 1024;
-	ret = esp_info->run_func_image(bank->target,
-		&run,
-		1,
-		ESP_STUB_CMD_FLASH_SIZE);
-	image_close(&run.image.image);
-	if (ret != ERROR_OK) {
-		LOG_ERROR("Failed to run flasher stub (%d)!", ret);
-		return 0;
-	}
-	size = (uint32_t)run.ret_code;
-	if (size == 0)
-		LOG_ERROR("Failed to get flash size!");
-	LOG_DEBUG("%s size 0x%x", __func__, size);
-	return size;
-}
-
 static int esp_algo_flash_get_mappings(struct flash_bank *bank,
 	struct esp_flash_bank *esp_info,
-	struct esp_flash_mapping *flash_map,
+	struct esp_stub_flash_map *flash_map,
 	uint32_t appimage_flash_base)
 {
-	struct algorithm_run_data run;
+	struct esp_algorithm_run_data run;
+	const struct esp_flasher_stub_config *stub_cfg = esp_info->get_stub(bank, ESP_STUB_CMD_FLASH_MAP_GET);
+	const uint32_t stack_size = esp_info->stub_log_enabled ?
+		stub_cfg->stack_default_sz * 2 : stub_cfg->stack_default_sz;
 
-	int ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw, esp_info->get_stub(bank));
+	int ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw, stub_cfg);
 	if (ret != ERROR_OK)
 		return ret;
 
-	run.stack_size = 1300;
+	run.stack_size = stack_size;
+	run.check_preloaded_binary = esp_info->stub_log_enabled ? false : esp_info->check_preloaded_binary;
 
 	struct mem_param mp;
 	init_mem_param(&mp,
 		2 /*2nd usr arg*/,
-		sizeof(struct esp_flash_mapping) /*size in bytes*/,
+		sizeof(struct esp_stub_flash_map) /*size in bytes*/,
 		PARAM_IN);
 	run.mem_args.params = &mp;
 	run.mem_args.count = 1;
@@ -375,32 +376,51 @@ static int esp_algo_flash_get_mappings(struct flash_bank *bank,
 		destroy_mem_param(&mp);
 		return ret;
 	}
-	if (run.ret_code != ESP_STUB_ERR_OK) {
-		LOG_ERROR("Failed to get flash maps (%" PRId32 ")!", run.ret_code);
-		if (run.ret_code == ESP_STUB_ERR_INVALID_IMAGE)
+
+	flash_map->flash_size = target_buffer_get_u32(bank->target, mp.value + ESP_STUB_FLASHMAP_FLASH_SIZE);
+	flash_map->retcode = target_buffer_get_u32(bank->target, mp.value + ESP_STUB_FLASHMAP_RETCODE);
+
+	if (flash_map->retcode != ESP_STUB_ERR_OK) {
+		LOG_WARNING("Failed to get flash maps (%" PRId32 ")!", flash_map->retcode);
+		if (flash_map->retcode == ESP_STUB_ERR_INVALID_IMAGE)
 			LOG_WARNING(
 				"Application image is invalid! Check configured binary flash offset 'appimage_offset'.");
-		else if (run.ret_code == ESP_STUB_ERR_INVALID_PARTITION)
+		else if (flash_map->retcode == ESP_STUB_ERR_INVALID_PARTITION)
 			LOG_WARNING("Invalid partition! One of the partition size exceeds the flash chip size!");
-		else if (run.ret_code == ESP_STUB_ERR_INVALID_APP_MAGIC)
+		else if (flash_map->retcode == ESP_STUB_ERR_INVALID_APP_MAGIC)
 			LOG_WARNING("Invalid magic number in app image!");
+		else if (flash_map->retcode == ESP_STUB_ERR_FLASH_SIZE)
+			LOG_WARNING("Failed to read flash size!");
+		else if (flash_map->retcode == ESP_STUB_ERR_READ_PARTITION)
+			LOG_WARNING("Failed to read partititon table!");
+		else if (flash_map->retcode == ESP_STUB_ERR_READ_APP_SEGMENT)
+			LOG_WARNING("Failed to read app segment header!");
+		else if (flash_map->retcode == ESP_STUB_ERR_READ_APP_IMAGE_HEADER)
+			LOG_WARNING("Failed to read app image header!");
 		ret = ERROR_FAIL;
 	} else {
-		memcpy(flash_map, mp.value, sizeof(struct esp_flash_mapping));
-		if (flash_map->maps_num > ESP_FLASH_MAPS_MAX) {
+		flash_map->map.maps_num = target_buffer_get_u32(bank->target, mp.value + ESP_STUB_FLASHMAP_MAPSNUM_OFF);
+		if (flash_map->map.maps_num > ESP_FLASH_MAPS_MAX) {
 			LOG_ERROR("Too many flash mappings %d! Must be %d.",
-				flash_map->maps_num,
+				flash_map->map.maps_num,
 				ESP_FLASH_MAPS_MAX);
 			ret = ERROR_FAIL;
-		} else if (flash_map->maps_num == 0) {
+		} else if (flash_map->map.maps_num == 0) {
 			LOG_WARNING("Empty flash mapping!");
 		} else {
-			for (uint32_t i = 0; i < flash_map->maps_num; i++)
+			for (uint32_t i = 0; i < flash_map->map.maps_num; i++) {
+				flash_map->map.maps[i].phy_addr =
+					target_buffer_get_u32(bank->target, mp.value + ESP_STUB_FLASHMAP_PHYADDR_OFF(i));
+				flash_map->map.maps[i].load_addr =
+					target_buffer_get_u32(bank->target, mp.value + ESP_STUB_FLASHMAP_LOADADDR_OFF(i));
+				flash_map->map.maps[i].size =
+					target_buffer_get_u32(bank->target, mp.value + ESP_STUB_FLASHMAP_SIZE_OFF(i));
 				LOG_INFO("Flash mapping %d: 0x%x -> 0x%x, %d KB",
 					i,
-					flash_map->maps[i].phy_addr,
-					flash_map->maps[i].load_addr,
-					flash_map->maps[i].size / 1024);
+					flash_map->map.maps[i].phy_addr,
+					flash_map->map.maps[i].load_addr,
+					flash_map->map.maps[i].size / 1024);
+			}
 		}
 	}
 	destroy_mem_param(&mp);
@@ -410,28 +430,27 @@ static int esp_algo_flash_get_mappings(struct flash_bank *bank,
 int esp_algo_flash_erase(struct flash_bank *bank, unsigned int first, unsigned int last)
 {
 	struct esp_flash_bank *esp_info = bank->driver_priv;
-	struct algorithm_run_data run;
+	struct esp_algorithm_run_data run;
+	const struct esp_flasher_stub_config *stub_cfg = esp_info->get_stub(bank, ESP_STUB_CMD_FLASH_READ);
+	const uint32_t stack_size = esp_info->stub_log_enabled ?
+		stub_cfg->stack_default_sz * 2 : stub_cfg->stack_default_sz;
 
 	if (bank->target->state != TARGET_HALTED) {
 		LOG_ERROR("Target not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 	assert((first <= last) && (last < bank->num_sectors));
-	if (esp_info->hw_flash_base + first * esp_info->sec_sz <
-		esp_info->flash_min_offset) {
-		LOG_ERROR("Invalid offset!");
-		return ERROR_FAIL;
-	}
 
 	struct duration bench;
 	duration_start(&bench);
 
-	int ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw, esp_info->get_stub(bank));
+	int ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw,
+		esp_info->get_stub(bank, ESP_STUB_CMD_FLASH_ERASE));
 	if (ret != ERROR_OK)
 		return ret;
 
-	run.stack_size = 1024;
-	run.tmo = ESP_FLASH_ERASE_TMO;
+	run.stack_size = stack_size;
+	run.timeout_ms = ESP_FLASH_ERASE_TMO;
 	ret = esp_info->run_func_image(bank->target,
 		&run,
 		3,
@@ -476,7 +495,7 @@ static int esp_algo_flash_rw_do(struct target *target, void *priv)
 			return retval;
 		}
 		/* transfer block */
-		LOG_DEBUG("Transfer block %d, %d bytes", block_id, len);
+		LOG_DEBUG("Transfer block %d, read %d bytes from target", block_id, len);
 		retval = rw->xfer(target, block_id, len, rw);
 		if (retval == ERROR_WAIT) {
 			LOG_DEBUG("Block not ready");
@@ -512,7 +531,10 @@ static int esp_algo_flash_rw_do(struct target *target, void *priv)
 			return ERROR_FAIL;
 		}
 		alive_sleep(10);
+		int smp = target->smp;
+		target->smp = 0;
 		target_poll(target);
+		target->smp = smp;
 	}
 	if (duration_measure(&algo_time) != 0) {
 		LOG_ERROR("Failed to stop data write measurement!");
@@ -568,12 +590,13 @@ static int esp_algo_flash_write_xfer(struct target *target, uint32_t block_id, u
 	}
 	state->rw.total_count += wr_sz;
 	state->prev_block_id = block_id;
+	LOG_DEBUG("Transferred %u bytes to target. %u/%u", wr_sz, state->rw.total_count, state->rw.count);
 
 	return ERROR_OK;
 }
 
 static int esp_algo_flash_write_state_init(struct target *target,
-	struct algorithm_run_data *run,
+	struct esp_algorithm_run_data *run,
 	struct esp_flash_write_state *state)
 {
 	struct duration algo_time;
@@ -591,9 +614,9 @@ static int esp_algo_flash_write_state_init(struct target *target,
 	}
 
 	/* alloc memory for stub flash write arguments in data working area */
-	if (target_alloc_alt_working_area(target, sizeof(state->stub_wargs),
+	if (target_alloc_working_area(target, sizeof(state->stub_wargs),
 			&state->stub_wargs_area) != ERROR_OK) {
-		LOG_ERROR("no working area available, can't alloc space for stub flash arguments");
+		LOG_ERROR("no working area available, can't alloc space for stub flash arguments!");
 		return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 	}
 
@@ -603,7 +626,7 @@ static int esp_algo_flash_write_state_init(struct target *target,
 		return ERROR_FAIL;
 	}
 	uint32_t buffer_size = 64 * 1024;
-	while (target_alloc_alt_working_area_try(target, buffer_size,
+	while (target_alloc_working_area_try(target, buffer_size,
 			&state->target_buf) != ERROR_OK) {
 		buffer_size /= 2;
 		if (buffer_size == 0) {
@@ -630,13 +653,13 @@ static int esp_algo_flash_write_state_init(struct target *target,
 		return ERROR_TARGET_FAILURE;
 	}
 
-	algorithm_user_arg_set_uint(run, 1, state->stub_wargs_area->address);
+	esp_algorithm_user_arg_set_uint(run, 1, state->stub_wargs_area->address);
 
 	return ERROR_OK;
 }
 
 static void esp_algo_flash_write_state_cleanup(struct target *target,
-	struct algorithm_run_data *run,
+	struct esp_algorithm_run_data *run,
 	struct esp_flash_write_state *state)
 {
 	struct duration algo_time;
@@ -645,14 +668,14 @@ static void esp_algo_flash_write_state_cleanup(struct target *target,
 		return;
 	if (duration_start(&algo_time) != 0)
 		LOG_ERROR("Failed to start workarea alloc time measurement!");
-	target_free_alt_working_area(target, state->target_buf);
-	target_free_alt_working_area(target, state->stub_wargs_area);
+	target_free_working_area(target, state->target_buf);
+	target_free_working_area(target, state->stub_wargs_area);
 	if (duration_measure(&algo_time) != 0)
 		LOG_ERROR("Failed to stop data write measurement!");
 	LOG_DEBUG("PROF: Workarea freed in %g ms", duration_elapsed(&algo_time) * 1000);
 }
 
-int esp_algo_flash_apptrace_info_init(struct target *target, struct esp_flash_bank *esp_info,
+static int esp_algo_flash_apptrace_info_init(struct target *target, struct esp_flash_bank *esp_info,
 	target_addr_t new_addr, target_addr_t *old_addr)
 {
 	if (esp_info->apptrace_hw->info_init)
@@ -661,11 +684,11 @@ int esp_algo_flash_apptrace_info_init(struct target *target, struct esp_flash_ba
 	return ERROR_OK;
 }
 
-int esp_algo_flash_apptrace_info_restore(struct target *target,
+static int esp_algo_flash_apptrace_info_restore(struct target *target,
 	struct esp_flash_bank *esp_info,
 	target_addr_t old_addr)
 {
-	if (esp_info->apptrace_hw->info_init)
+	if (esp_info->apptrace_hw->info_init && old_addr > 0)
 		return esp_info->apptrace_hw->info_init(target, old_addr, NULL);
 	return ERROR_OK;
 }
@@ -674,17 +697,15 @@ int esp_algo_flash_write(struct flash_bank *bank, const uint8_t *buffer,
 	uint32_t offset, uint32_t count)
 {
 	struct esp_flash_bank *esp_info = bank->driver_priv;
-	struct algorithm_run_data run;
+	struct esp_algorithm_run_data run;
 	struct esp_flash_write_state wr_state;
-	const struct esp_flasher_stub_config *stub_cfg = esp_info->get_stub(bank);
+	const struct esp_flasher_stub_config *stub_cfg = esp_info->get_stub(bank,
+		esp_info->compression ? ESP_STUB_CMD_FLASH_WRITE_DEFLATED : ESP_STUB_CMD_FLASH_WRITE);
 	uint8_t *compressed_buff = NULL;
 	uint32_t compressed_len = 0;
-	uint32_t stack_size = 1024 + ESP_STUB_UNZIP_BUFF_SIZE;
+	uint32_t stack_size = esp_info->stub_log_enabled ?
+		stub_cfg->stack_default_sz * 2 : stub_cfg->stack_default_sz;
 
-	if (esp_info->hw_flash_base + offset < esp_info->flash_min_offset) {
-		LOG_ERROR("Invalid offset!");
-		return ERROR_FAIL;
-	}
 	if (offset & 0x3UL) {
 		LOG_ERROR("Unaligned offset!");
 		return ERROR_FAIL;
@@ -732,11 +753,11 @@ int esp_algo_flash_write(struct flash_bank *bank, const uint8_t *buffer,
 		stack_size += ESP_STUB_IFLATOR_SIZE;
 	}
 
-	run.stack_size = stack_size + stub_cfg->stack_data_pool_sz;
+	run.stack_size = stack_size + ESP_STUB_UNZIP_BUFF_SIZE + stub_cfg->stack_data_pool_sz;
 	run.usr_func = esp_algo_flash_rw_do;
 	run.usr_func_arg = &wr_state;
-	run.usr_func_init = (algorithm_usr_func_init_t)esp_algo_flash_write_state_init;
-	run.usr_func_done = (algorithm_usr_func_done_t)esp_algo_flash_write_state_cleanup;
+	run.usr_func_init = (esp_algorithm_usr_func_init_t)esp_algo_flash_write_state_init;
+	run.usr_func_done = (esp_algorithm_usr_func_done_t)esp_algo_flash_write_state_cleanup;
 	memset(&wr_state, 0, sizeof(struct esp_flash_write_state));
 	wr_state.rw.buffer = esp_info->compression ? compressed_buff : (uint8_t *)buffer;
 	wr_state.rw.count = esp_info->compression ? compressed_len : count;
@@ -831,7 +852,7 @@ static int esp_algo_flash_read_xfer(struct target *target, uint32_t block_id, ui
 	uint8_t *ptr = state->rd_buf;
 	while (ptr < state->rd_buf + len) {
 		uint32_t data_sz = 0;
-		ptr = state->rw.apptrace->usr_block_get(ptr, &data_sz);
+		ptr = state->rw.apptrace->usr_block_get(target, ptr, &data_sz);
 		if (data_sz > 0)
 			memcpy(state->rw.buffer + state->rw.total_count, ptr, data_sz);
 		ptr += data_sz;
@@ -842,7 +863,7 @@ static int esp_algo_flash_read_xfer(struct target *target, uint32_t block_id, ui
 }
 
 static int esp_algo_flash_read_state_init(struct target *target,
-	struct algorithm_run_data *run,
+	struct esp_algorithm_run_data *run,
 	struct esp_flash_read_state *state)
 {
 	/* clear control register, stub will set APPTRACE_HOST_CONNECT bit when it will be
@@ -863,9 +884,11 @@ int esp_algo_flash_read(struct flash_bank *bank, uint8_t *buffer,
 	uint32_t offset, uint32_t count)
 {
 	struct esp_flash_bank *esp_info = bank->driver_priv;
-	struct algorithm_run_data run;
+	struct esp_algorithm_run_data run;
 	struct esp_flash_read_state rd_state;
-	const struct esp_flasher_stub_config *stub_cfg = esp_info->get_stub(bank);
+	const struct esp_flasher_stub_config *stub_cfg = esp_info->get_stub(bank, ESP_STUB_CMD_FLASH_READ);
+	const uint32_t stack_size = esp_info->stub_log_enabled ?
+		stub_cfg->stack_default_sz * 2 : stub_cfg->stack_default_sz;
 
 	if (offset & 0x3UL) {
 		LOG_ERROR("Unaligned offset!");
@@ -895,8 +918,8 @@ int esp_algo_flash_read(struct flash_bank *bank, uint8_t *buffer,
 		return ret;
 	}
 
-	run.stack_size = 1024 + stub_cfg->stack_data_pool_sz;
-	run.usr_func_init = (algorithm_usr_func_init_t)esp_algo_flash_read_state_init;
+	run.stack_size = stack_size + stub_cfg->stack_data_pool_sz;
+	run.usr_func_init = (esp_algorithm_usr_func_init_t)esp_algo_flash_read_state_init;
 	run.usr_func = esp_algo_flash_rw_do;
 	run.usr_func_arg = &rd_state;
 	memset(&rd_state, 0, sizeof(struct esp_flash_read_state));
@@ -934,7 +957,7 @@ int esp_algo_flash_read(struct flash_bank *bank, uint8_t *buffer,
 int esp_algo_flash_probe(struct flash_bank *bank)
 {
 	struct esp_flash_bank *esp_info = bank->driver_priv;
-	struct esp_flash_mapping flash_map = { .maps_num = 0 };
+	struct esp_stub_flash_map flash_map = { .map.maps_num = 0 };
 	uint32_t irom_base = 0, irom_sz = 0, drom_base = 0, drom_sz = 0, irom_flash_base = 0,
 		drom_flash_base = 0;
 
@@ -960,25 +983,26 @@ int esp_algo_flash_probe(struct flash_bank *bank)
 		esp_info,
 		&flash_map,
 		esp_info->appimage_flash_base);
-	if (ret != ERROR_OK || flash_map.maps_num == 0) {
+	if (ret != ERROR_OK || flash_map.map.maps_num == 0) {
 		LOG_WARNING("Failed to get flash mappings (%d)!", ret);
 		/* if no DROM/IROM mappings so pretend they are at the end of the HW flash bank and
 		 * have zero size to allow correct memory map with non zero RAM region */
-		irom_base = drom_base = esp_algo_flash_get_size(bank);
+		irom_base = flash_map.flash_size;
+		drom_base = flash_map.flash_size;
 	} else {
 		/* flash map index 0 belongs to drom */
-		if (esp_info->is_drom_address(flash_map.maps[0].load_addr)) {
-			drom_flash_base = flash_map.maps[0].load_addr & ~(esp_info->sec_sz - 1);
-			drom_base = flash_map.maps[0].load_addr & ~(esp_info->sec_sz - 1);
-			drom_sz = flash_map.maps[0].size;
+		if (esp_info->is_drom_address(flash_map.map.maps[0].load_addr)) {
+			drom_flash_base = flash_map.map.maps[0].phy_addr & ~(esp_info->sec_sz - 1);
+			drom_base = flash_map.map.maps[0].load_addr & ~(esp_info->sec_sz - 1);
+			drom_sz = flash_map.map.maps[0].size;
 			if (drom_sz & (esp_info->sec_sz - 1))
 				drom_sz = (drom_sz & ~(esp_info->sec_sz - 1)) + esp_info->sec_sz;
 		}
 		/* flash map index 1 belongs to irom */
-		if (flash_map.maps_num > 1 && esp_info->is_irom_address(flash_map.maps[1].load_addr)) {
-			irom_flash_base = flash_map.maps[1].phy_addr & ~(esp_info->sec_sz - 1);
-			irom_base = flash_map.maps[1].load_addr & ~(esp_info->sec_sz - 1);
-			irom_sz = flash_map.maps[1].size;
+		if (flash_map.map.maps_num > 1 && esp_info->is_irom_address(flash_map.map.maps[1].load_addr)) {
+			irom_flash_base = flash_map.map.maps[1].phy_addr & ~(esp_info->sec_sz - 1);
+			irom_base = flash_map.map.maps[1].load_addr & ~(esp_info->sec_sz - 1);
+			irom_sz = flash_map.map.maps[1].size;
 			if (irom_sz & (esp_info->sec_sz - 1))
 				irom_sz = (irom_sz & ~(esp_info->sec_sz - 1)) + esp_info->sec_sz;
 		}
@@ -994,7 +1018,7 @@ int esp_algo_flash_probe(struct flash_bank *bank)
 		bank->size = drom_sz;
 	} else {
 		esp_info->hw_flash_base = 0;
-		bank->size = esp_algo_flash_get_size(bank);
+		bank->size = flash_map.flash_size;
 		if (bank->size == 0) {
 			LOG_ERROR("Failed to probe flash, size %d KB", bank->size / 1024);
 			return ERROR_FAIL;
@@ -1033,46 +1057,80 @@ int esp_algo_flash_auto_probe(struct flash_bank *bank)
 }
 
 static int esp_algo_flash_bp_op_state_init(struct target *target,
-	struct algorithm_run_data *run,
+	struct esp_algorithm_run_data *run,
 	struct esp_flash_bp_op_state *state)
 {
-	/* aloocate target buffer for temp storage of flash sections contents when modifying
-	 * instruction */
+	struct xtensa *xtensa = target->arch_info;
+
 	LOG_DEBUG("SEC_SIZE %d", state->esp_info->sec_sz);
-	int ret = target_alloc_alt_working_area(target,
-		2 * (state->esp_info->sec_sz),
-		&state->target_buf);
+
+	size_t alloc_size = state->esp_info->sec_sz;
+
+	/* Check whether we need to allocate 2 sectors for any bp address. */
+	for (size_t slot = 0; slot < state->num_bps; ++slot) {
+		int inst_size = 2; /* riscv uses 2 byte c.ebreak instruction */
+		if (xtensa->common_magic == XTENSA_COMMON_MAGIC) {
+			/* Depends on the original inst size. While adding bp, we don't know the size yet. */
+			inst_size = state->sw_bp[slot].insn_sz > 0 ? state->sw_bp[slot].insn_sz : XT_ISNS_SZ_MAX;
+		}
+		/* Check if replacing the break instruction will overlap with the next sector. */
+		int sector_no = ALIGN_DOWN(state->sw_bp[slot].bp_flash_addr,
+			state->esp_info->sec_sz - 1) / state->esp_info->sec_sz;
+		int next_sector_no = ALIGN_DOWN(state->sw_bp[slot].bp_flash_addr + inst_size,
+			state->esp_info->sec_sz - 1) / state->esp_info->sec_sz;
+		if (next_sector_no > sector_no) {
+			alloc_size *= 2;
+			/* we don't need to check the others */
+			break;
+		}
+	}
+
+	if (run->run_preloaded_binary) {
+		/* On the target, as a BP backup/restore space 4K is allocated at the (iram_start + 0x1000) address */
+		/* If alloc_size is 8K, we will allocate memory from working area by adding necessary padding of 4K bytes */
+		/* Because first 4K is reserved for the code at the target. We don't want stub code to override it */
+		if (alloc_size > state->esp_info->sec_sz) {
+			uint32_t backup_working_area_prev = target->backup_working_area;
+			target->backup_working_area = 0;
+			if (target_alloc_working_area(target, 0x1000, &run->stub.padding) != ERROR_OK) {
+				LOG_ERROR("no working area available, can't alloc space for stub code!");
+				return ERROR_FAIL;
+			}
+			target->backup_working_area = backup_working_area_prev;
+		} else {
+			target_addr_t addr = run->image.iram_org + state->esp_info->sec_sz;
+			esp_algorithm_user_arg_set_uint(run, 3, addr);
+			return ERROR_OK;
+		}
+	}
+
+	/* allocate target buffer for temp storage of flash sections contents when modifying instruction */
+	int ret = target_alloc_working_area(target, alloc_size, &state->target_buf);
 	if (ret != ERROR_OK) {
-		LOG_ERROR("Failed to alloc target buffer for insn sectors!");
+		LOG_ERROR("Failed to alloc (%zu) bytes target buffer for insn sectors!", alloc_size);
 		return ret;
 	}
 	/* insn sectors buffer */
-	algorithm_user_arg_set_uint(run, 3, state->target_buf->address);
+	esp_algorithm_user_arg_set_uint(run, 3, state->target_buf->address);
 
 	return ERROR_OK;
 }
 
 static void esp_algo_flash_bp_op_state_cleanup(struct target *target,
-	struct algorithm_run_data *run,
+	struct esp_algorithm_run_data *run,
 	struct esp_flash_bp_op_state *state)
 {
 	if (!state->target_buf)
 		return;
-	target_free_alt_working_area(target, state->target_buf);
+	target_free_working_area(target, state->target_buf);
 }
 
-int esp_algo_flash_breakpoint_add(struct target *target,
+int esp_algo_flash_breakpoint_prepare(struct target *target,
 	struct breakpoint *breakpoint,
 	struct esp_flash_breakpoint *sw_bp)
 {
-	struct esp_flash_bank *esp_info;
-	struct algorithm_run_data run;
 	struct flash_bank *bank;
-	struct esp_flash_bp_op_state op_state;
-	struct mem_param mp;
 
-	/* flash belongs to root target, so we need to find flash using it instead of core
-	 * sub-target */
 	int ret = get_flash_bank_by_addr(target, breakpoint->address, true, &bank);
 	if (ret != ERROR_OK) {
 		LOG_ERROR("%s: Failed to get flash bank (%d)!", target_name(target), ret);
@@ -1087,111 +1145,167 @@ int esp_algo_flash_breakpoint_add(struct target *target,
 		return ERROR_FAIL;
 	}
 
-	esp_info = bank->driver_priv;
-
-	op_state.esp_info = esp_info;
-	LOG_DEBUG("SEC_SIZE %d", esp_info->sec_sz);
-
-	ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw, esp_info->get_stub(bank));
-	if (ret != ERROR_OK)
-		return ret;
-	run.stack_size = 1300;
-	run.usr_func_arg = &op_state;
-	run.usr_func_init = (algorithm_usr_func_init_t)esp_algo_flash_bp_op_state_init;
-	run.usr_func_done = (algorithm_usr_func_done_t)esp_algo_flash_bp_op_state_cleanup;
+	struct esp_flash_bank *esp_info = bank->driver_priv;
 
 	sw_bp->oocd_bp = breakpoint;
 	sw_bp->bank = bank;
+	sw_bp->bp_address = breakpoint->address;
 
-	init_mem_param(&mp, 2 /*2nd usr arg*/, 4 /*size in bytes*/, PARAM_IN);
-	run.mem_args.params = &mp;
-	run.mem_args.count = 1;
-	uint32_t bp_flash_addr = esp_info->hw_flash_base +
-		(breakpoint->address - bank->base);
+	uint32_t bp_flash_addr = esp_info->hw_flash_base + (breakpoint->address - bank->base);
+	sw_bp->bp_flash_addr = bp_flash_addr;
+	bp_flash_addr &= ~(esp_info->sec_sz - 1);
+	sw_bp->sector_num = bp_flash_addr / esp_info->sec_sz;
+	return ERROR_OK;
+}
+
+int esp_algo_flash_breakpoint_add(struct target *target, struct esp_flash_breakpoint *sw_bp, size_t num_bps)
+{
+	struct flash_bank *bank = sw_bp[0].bank;
+	struct esp_flash_bank *esp_info = bank->driver_priv;
+	struct esp_algorithm_run_data run;
+	struct esp_flash_bp_op_state op_state;
+	struct mem_param mp[2]; /* in and out */
+	const size_t size_bp_inst = sizeof(sw_bp->bp_flash_addr);
+	const struct esp_flasher_stub_config *stub_cfg = esp_info->get_stub(bank, ESP_STUB_CMD_FLASH_BP_SET);
+	const uint32_t stack_size = esp_info->stub_log_enabled ?
+		stub_cfg->stack_default_sz * 2 : stub_cfg->stack_default_sz;
+
+	op_state.esp_info = esp_info;
+	op_state.sw_bp = sw_bp;
+	op_state.num_bps = num_bps;
+	op_state.target_buf = NULL;
+
+	LOG_DEBUG("SEC_SIZE % " PRId32 " num_bps:(%zu)", esp_info->sec_sz, num_bps);
+
+	int ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw, stub_cfg);
+	if (ret != ERROR_OK)
+		return ret;
+
+	run.stack_size = stack_size;
+	run.usr_func_arg = &op_state;
+	run.usr_func_init = (esp_algorithm_usr_func_init_t)esp_algo_flash_bp_op_state_init;
+	run.usr_func_done = (esp_algorithm_usr_func_done_t)esp_algo_flash_bp_op_state_cleanup;
+	run.check_preloaded_binary = esp_info->stub_log_enabled ? false : esp_info->check_preloaded_binary;
+
+	init_mem_param(&mp[0], 1 /* First user arg */, num_bps * size_bp_inst /* size in bytes */, PARAM_OUT);
+	/* bp0_flash_addr + bp1_flash_addr + bp2_flash_addr + ... bpn_flash_addr */
+	for (size_t slot = 0; slot < num_bps; ++slot)
+		target_buffer_set_u32(target, &mp[0].value[slot * size_bp_inst], sw_bp[slot].bp_flash_addr);
+
+	init_mem_param(&mp[1], 2 /* 2nd usr arg */, num_bps * size_bp_inst /* size in bytes */, PARAM_IN);
+
+	run.mem_args.params = mp;
+	run.mem_args.count = 2;
+
 	ret = esp_info->run_func_image(target,
 		&run,
-		4 /*args num*/,
-		ESP_STUB_CMD_FLASH_BP_SET /*cmd*/,
-		bp_flash_addr /*bp_addr*/,
-		0 /*address to store insn*/,
-		0 /*address to store insn sectors*/);
+		5 /* args num */,
+		ESP_STUB_CMD_FLASH_BP_SET /* cmd */,
+		0 /* address to store bp flash addresses (out) */,
+		0 /* address to store original instructions for each breakpoints (in) */,
+		0 /* address to store insn sectors */,
+		num_bps);
 	image_close(&run.image.image);
 	if (ret != ERROR_OK) {
 		LOG_ERROR("%s: Failed to run flasher stub (%d)!", target_name(target), ret);
-		destroy_mem_param(&mp);
+		destroy_mem_param(&mp[0]);
+		destroy_mem_param(&mp[1]);
 		sw_bp->oocd_bp = NULL;
 		return ret;
 	}
 	if (run.ret_code <= 0) {
 		LOG_ERROR("%s: Failed to set bp (%" PRId32 ")!", target_name(target), run.ret_code);
-		destroy_mem_param(&mp);
+		destroy_mem_param(&mp[0]);
+		destroy_mem_param(&mp[1]);
 		sw_bp->oocd_bp = NULL;
 		return ERROR_FAIL;
 	}
-	sw_bp->insn_sz = (uint8_t)run.ret_code;
-	/* sanity check for instruction buffer overflow */
-	assert(sw_bp->insn_sz <= sizeof(sw_bp->insn));
-	memcpy(sw_bp->insn, mp.value, sw_bp->insn_sz);
-	destroy_mem_param(&mp);
-	LOG_DEBUG(
-		"%s: Placed flash SW breakpoint at " TARGET_ADDR_FMT
-		", insn [%02x %02x %02x %02x] %d bytes",
-		target_name(target),
-		breakpoint->address,
-		sw_bp->insn[0],
-		sw_bp->insn[1],
-		sw_bp->insn[2],
-		sw_bp->insn[3],
-		sw_bp->insn_sz);
+	/* insn_sz0 + inst0 + insn_sz1 + inst1 + insn_sz2 + inst2 + ... insn_szn + instn */
+	assert((uint8_t)run.ret_code == num_bps * sizeof(struct esp_flash_stub_bp_instructions));
+	struct esp_flash_stub_bp_instructions *bp_insts = (struct esp_flash_stub_bp_instructions *)mp[1].value;
+	for (size_t slot = 0; slot < num_bps; ++slot) {
+		sw_bp[slot].insn_sz = bp_insts[slot].size;
+		memcpy(sw_bp[slot].insn, &bp_insts[slot].buff, sw_bp[slot].insn_sz);
+		sw_bp[slot].oocd_bp->is_set = true;
+		sw_bp[slot].action = ESP_BP_ACT_ADD; /* to be compatible with non lazy-process */
+		sw_bp[slot].status = ESP_BP_STAT_DONE;
+		LOG_TARGET_DEBUG(target, "Placed flash SW breakpoint at " TARGET_ADDR_FMT
+			", insn [%02x %02x %02x %02x] %d bytes",
+			sw_bp[slot].bp_address,
+			sw_bp[slot].insn[0],
+			sw_bp[slot].insn[1],
+			sw_bp[slot].insn[2],
+			sw_bp[slot].insn[3],
+			sw_bp[slot].insn_sz);
+	}
+	destroy_mem_param(&mp[0]);
+	destroy_mem_param(&mp[1]);
 
 	return ERROR_OK;
 }
 
-int esp_algo_flash_breakpoint_remove(struct target *target,
-	struct esp_flash_breakpoint *sw_bp)
+int esp_algo_flash_breakpoint_remove(struct target *target, struct esp_flash_breakpoint *sw_bp, size_t num_bps)
 {
 	struct flash_bank *bank = (struct flash_bank *)(sw_bp->bank);
 	struct esp_flash_bank *esp_info = bank->driver_priv;
-	struct algorithm_run_data run;
+	struct esp_algorithm_run_data run;
 	struct esp_flash_bp_op_state op_state;
-	struct mem_param mp;
+	struct mem_param mp[2]; /* out and out */
+	const size_t size_bp_inst = sizeof(struct esp_flash_stub_bp_instructions);
+	const struct esp_flasher_stub_config *stub_cfg = esp_info->get_stub(bank, ESP_STUB_CMD_FLASH_BP_CLEAR);
+	const uint32_t stack_size = esp_info->stub_log_enabled ?
+		stub_cfg->stack_default_sz * 2 : stub_cfg->stack_default_sz;
 
-	int ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw, esp_info->get_stub(bank));
+	int ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw, stub_cfg);
 	if (ret != ERROR_OK)
 		return ret;
 
 	op_state.esp_info = esp_info;
-	run.stack_size = 1300;
+	op_state.sw_bp = sw_bp;
+	op_state.num_bps = num_bps;
+	op_state.target_buf = NULL;
+
+	run.stack_size = stack_size;
 	run.usr_func_arg = &op_state;
-	run.usr_func_init = (algorithm_usr_func_init_t)esp_algo_flash_bp_op_state_init;
-	run.usr_func_done = (algorithm_usr_func_done_t)esp_algo_flash_bp_op_state_cleanup;
+	run.usr_func_init = (esp_algorithm_usr_func_init_t)esp_algo_flash_bp_op_state_init;
+	run.usr_func_done = (esp_algorithm_usr_func_done_t)esp_algo_flash_bp_op_state_cleanup;
+	run.check_preloaded_binary = esp_info->stub_log_enabled ? false : esp_info->check_preloaded_binary;
 
-	init_mem_param(&mp, 2 /*2nd usr arg*/, sw_bp->insn_sz /*size in bytes*/, PARAM_OUT);
-	memcpy(mp.value, sw_bp->insn, sw_bp->insn_sz);
-	run.mem_args.params = &mp;
-	run.mem_args.count = 1;
+	init_mem_param(&mp[0], 1 /* First user arg */, 1 + num_bps * size_bp_inst /* size in bytes */, PARAM_OUT);
+	/* bp0_flash_addr + bp1_flash_addr + bp2_flash_addr + ... bpn_flash_addr */
+	for (size_t slot = 0; slot < num_bps; ++slot)
+		target_buffer_set_u32(target, &mp[0].value[slot * size_bp_inst], sw_bp[slot].bp_flash_addr);
 
-	uint32_t bp_flash_addr = esp_info->hw_flash_base +
-		(sw_bp->oocd_bp->address - bank->base);
-	LOG_DEBUG(
-		"%s: Remove flash SW breakpoint at " TARGET_ADDR_FMT
-		", insn [%02x %02x %02x %02x] %d bytes",
-		target_name(target),
-		sw_bp->oocd_bp->address,
-		sw_bp->insn[0],
-		sw_bp->insn[1],
-		sw_bp->insn[2],
-		sw_bp->insn[3],
-		sw_bp->insn_sz);
+	init_mem_param(&mp[1], 2 /* 2nd usr arg */, num_bps * size_bp_inst /* size in bytes */, PARAM_OUT);
+	struct esp_flash_stub_bp_instructions *bp_insts = (struct esp_flash_stub_bp_instructions *)mp[1].value;
+	for (size_t slot = 0; slot < num_bps; ++slot) {
+		bp_insts[slot].size = sw_bp[slot].insn_sz;
+		memcpy(&bp_insts[slot].buff, sw_bp[slot].insn, sw_bp[slot].insn_sz);
+	}
+	run.mem_args.params = mp;
+	run.mem_args.count = 2;
+	for (size_t slot = 0; slot < num_bps; ++slot) {
+		LOG_TARGET_DEBUG(target, "Remove flash SW breakpoint at " TARGET_ADDR_FMT
+			", insn [%02x %02x %02x %02x] %d bytes",
+			sw_bp[slot].bp_address,
+			sw_bp[slot].insn[0],
+			sw_bp[slot].insn[1],
+			sw_bp[slot].insn[2],
+			sw_bp[slot].insn[3],
+			sw_bp[slot].insn_sz);
+	}
+
 	ret = esp_info->run_func_image(target,
 		&run,
-		4 /*args num*/,
+		5 /*args num*/,
 		ESP_STUB_CMD_FLASH_BP_CLEAR /*cmd*/,
-		bp_flash_addr /*bp_addr*/,
-		0 /*address with insn*/,
-		0 /*address to store insn sectors*/);
+		0 /* address to store bp flash address (out) */,
+		0 /* address to restore original instructions for each breakpoints (out) */,
+		0 /* address to store insn sectors */,
+		num_bps);
 	image_close(&run.image.image);
-	destroy_mem_param(&mp);
+	destroy_mem_param(&mp[0]);
+	destroy_mem_param(&mp[1]);
 	if (ret != ERROR_OK) {
 		LOG_ERROR("Failed to run flasher stub (%d)!", ret);
 		return ret;
@@ -1201,15 +1315,26 @@ int esp_algo_flash_breakpoint_remove(struct target *target,
 		return ERROR_FAIL;
 	}
 
-	sw_bp->oocd_bp = NULL;
+	for (size_t slot = 0; slot < num_bps; ++slot) {
+		sw_bp[slot].oocd_bp = NULL;
+		sw_bp[slot].insn_sz = 0;
+		sw_bp[slot].bp_address = 0;
+		sw_bp[slot].bp_flash_addr = 0;
+		sw_bp[slot].action = ESP_BP_ACT_REM;
+		sw_bp[slot].status = ESP_BP_STAT_DONE;
+	}
+
 	return ret;
 }
 
 static int esp_algo_flash_calc_hash(struct flash_bank *bank, uint8_t *hash,
-	uint32_t offset, uint32_t count)
+	uint32_t offset, uint32_t count, bool verbose)
 {
 	struct esp_flash_bank *esp_info = bank->driver_priv;
-	struct algorithm_run_data run;
+	struct esp_algorithm_run_data run;
+	const struct esp_flasher_stub_config *stub_cfg = esp_info->get_stub(bank, ESP_STUB_CMD_FLASH_CALC_HASH);
+	const uint32_t stack_size = esp_info->stub_log_enabled ?
+		stub_cfg->stack_default_sz * 2 : stub_cfg->stack_default_sz;
 
 	if (offset & 0x3UL) {
 		LOG_ERROR("Unaligned offset!");
@@ -1221,11 +1346,11 @@ static int esp_algo_flash_calc_hash(struct flash_bank *bank, uint8_t *hash,
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
-	int ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw, esp_info->get_stub(bank));
+	int ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw, stub_cfg);
 	if (ret != ERROR_OK)
 		return ret;
 
-	run.stack_size = 1024 + ESP_STUB_RDWR_BUFF_SIZE;
+	run.stack_size = stack_size + ESP_STUB_RDWR_BUFF_SIZE;
 
 	struct mem_param mp;
 	init_mem_param(&mp,
@@ -1234,6 +1359,7 @@ static int esp_algo_flash_calc_hash(struct flash_bank *bank, uint8_t *hash,
 		PARAM_IN);
 	run.mem_args.params = &mp;
 	run.mem_args.count = 1;
+	run.timeout_ms = ESP_FLASH_VERIFY_TMO;
 
 	struct duration bench;
 	duration_start(&bench);
@@ -1257,32 +1383,36 @@ static int esp_algo_flash_calc_hash(struct flash_bank *bank, uint8_t *hash,
 	} else {
 		memcpy(hash, mp.value, 32);
 		duration_measure(&bench);
-		LOG_INFO("PROF: Flash verified in %g ms ",
-			duration_elapsed(&bench) * 1000);
+		if (verbose)
+			LOG_INFO("PROF: Flash verified in %g ms ",
+				duration_elapsed(&bench) * 1000);
 	}
 	destroy_mem_param(&mp);
 	return ret;
 }
 
-static int esp_algo_flash_boost_clock_freq(struct flash_bank *bank, int boost)
+static int esp_algo_flash_boost_clock_freq(struct flash_bank *bank, bool boost)
 {
 	struct esp_flash_bank *esp_info = bank->driver_priv;
-	struct algorithm_run_data run;
+	struct esp_algorithm_run_data run;
 	int new_cpu_freq = -1;	/* set to max level */
+	const struct esp_flasher_stub_config *stub_cfg = esp_info->get_stub(bank, ESP_STUB_CMD_FLASH_CLOCK_CONFIGURE);
+	const uint32_t stack_size = esp_info->stub_log_enabled ?
+		stub_cfg->stack_default_sz * 2 : stub_cfg->stack_default_sz;
 
-	int ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw, esp_info->get_stub(bank));
+	int ret = esp_algo_flasher_algorithm_init(&run, esp_info->stub_hw, stub_cfg);
 	if (ret != ERROR_OK)
 		return ret;
 
 	/* restore */
-	if (boost == 0)
+	if (!boost)
 		new_cpu_freq = esp_info->old_cpu_freq;
 
-	run.stack_size = 1024;
+	run.stack_size = stack_size;
 	ret = esp_info->run_func_image(bank->target,
 		&run,
 		2,
-		ESP_STUB_CMD_CLOCK_CONFIGURE,
+		ESP_STUB_CMD_FLASH_CLOCK_CONFIGURE,
 		new_cpu_freq);
 	image_close(&run.image.image);
 	if (ret != ERROR_OK) {
@@ -1348,7 +1478,7 @@ static int esp_algo_flash_appimage_base_update(struct target *target,
 	return retval;
 }
 
-COMMAND_HELPER(esp_algo_flash_cmd_appimage_flashoff_do, struct target *target)
+static COMMAND_HELPER(esp_algo_flash_cmd_appimage_flashoff_do, struct target *target)
 {
 	if (CMD_ARGC != 1) {
 		command_print(CMD, "Flash offset not specified!");
@@ -1365,23 +1495,17 @@ COMMAND_HELPER(esp_algo_flash_cmd_appimage_flashoff_do, struct target *target)
 	if (ret != ERROR_OK)
 		return ret;
 
-	return ERROR_OK;
-}
-
-COMMAND_HANDLER(esp_algo_flash_cmd_appimage_flashoff)
-{
-	return CALL_COMMAND_HANDLER(esp_algo_flash_cmd_appimage_flashoff_do,
-		get_current_target(CMD_CTX));
+	return esp_algo_flash_appimage_base_update(target, "flash", appimage_flash_base);
 }
 
 static int esp_algo_flash_set_compression(struct target *target,
 	char *bank_name_suffix,
-	int compression)
+	bool compression)
 {
 	struct flash_bank *bank;
 	struct esp_flash_bank *esp_info;
 
-	int retval = esp_algo_target_to_flash_bank(target, &bank, bank_name_suffix, true);
+	int retval = esp_algo_target_to_flash_bank(target, &bank, bank_name_suffix, false);
 	if (retval != ERROR_OK)
 		return ERROR_FAIL;
 
@@ -1397,33 +1521,18 @@ static int esp_algo_flash_set_compression(struct target *target,
 	return ERROR_OK;
 }
 
-COMMAND_HELPER(esp_algo_flash_cmd_set_compression, struct target *target)
+static COMMAND_HELPER(esp_algo_flash_cmd_set_compression, struct target *target)
 {
 	if (CMD_ARGC != 1) {
 		command_print(CMD, "Compression not specified!");
 		return ERROR_FAIL;
 	}
 
-	int compression = 0;
-
-	if (0 == strcmp("on", CMD_ARGV[0])) {
-		LOG_DEBUG("Flash compressed upload is on");
-		compression = 1;
-	} else if (0 == strcmp("off", CMD_ARGV[0])) {
-		LOG_DEBUG("Flash compressed upload is off");
-		compression = 0;
-	} else {
-		LOG_DEBUG("unknown flag");
-		return ERROR_FAIL;
-	}
+	bool compression = false;
+	COMMAND_PARSE_BOOL(CMD_ARGV[0], compression, "on", "off");
+	LOG_DEBUG("Flash compressed upload is %s", compression ? "on" : "off");
 
 	return esp_algo_flash_set_compression(target, "flash", compression);
-}
-
-COMMAND_HANDLER(esp_algo_flash_cmd_compression)
-{
-	return CALL_COMMAND_HANDLER(esp_algo_flash_cmd_set_compression,
-		get_current_target(CMD_CTX));
 }
 
 static int esp_algo_flash_set_encryption(struct target *target,
@@ -1431,7 +1540,7 @@ static int esp_algo_flash_set_encryption(struct target *target,
 	int encryption)
 {
 	struct flash_bank *bank;
-	int retval = esp_algo_target_to_flash_bank(target, &bank, bank_name_suffix, true);
+	int retval = esp_algo_target_to_flash_bank(target, &bank, bank_name_suffix, false);
 	if (retval != ERROR_OK)
 		return ERROR_FAIL;
 
@@ -1443,7 +1552,7 @@ static int esp_algo_flash_set_encryption(struct target *target,
 static int esp_algo_flash_set_stub_log(struct target *target, char *bank_name_suffix, bool log_stat)
 {
 	struct flash_bank *bank;
-	int retval = esp_algo_target_to_flash_bank(target, &bank, bank_name_suffix, true);
+	int retval = esp_algo_target_to_flash_bank(target, &bank, bank_name_suffix, false);
 	if (retval != ERROR_OK)
 		return ERROR_FAIL;
 
@@ -1452,7 +1561,7 @@ static int esp_algo_flash_set_stub_log(struct target *target, char *bank_name_su
 	return ERROR_OK;
 }
 
-COMMAND_HELPER(esp_algo_flash_cmd_set_encryption, struct target *target)
+static COMMAND_HELPER(esp_algo_flash_cmd_set_encryption, struct target *target)
 {
 	if (CMD_ARGC != 1) {
 		command_print(CMD, "Encryption not specified!");
@@ -1465,15 +1574,10 @@ COMMAND_HELPER(esp_algo_flash_cmd_set_encryption, struct target *target)
 	return esp_algo_flash_set_encryption(target, "flash", encryption);
 }
 
-COMMAND_HANDLER(esp_algo_flash_cmd_encryption)
-{
-	return CALL_COMMAND_HANDLER(esp_algo_flash_cmd_set_encryption,
-		get_current_target(CMD_CTX));
-}
-
 static int esp_flash_verify_bank_hash(struct target *target,
 	uint32_t offset,
-	const char *file_name)
+	const char *file_name,
+	bool verbose)
 {
 	uint8_t file_hash[TC_SHA256_DIGEST_SIZE], target_hash[TC_SHA256_DIGEST_SIZE];
 	uint8_t *buffer_file;
@@ -1541,7 +1645,7 @@ static int esp_flash_verify_bank_hash(struct target *target,
 		return retval;
 	}
 
-	retval = esp_algo_flash_calc_hash(bank, target_hash, offset, length);
+	retval = esp_algo_flash_calc_hash(bank, target_hash, offset, length, verbose);
 	if (retval != ERROR_OK) {
 		LOG_ERROR("Flash sha256 calculation failure");
 		return retval;
@@ -1549,7 +1653,7 @@ static int esp_flash_verify_bank_hash(struct target *target,
 
 	differ = memcmp(file_hash, target_hash, TC_SHA256_DIGEST_SIZE);
 
-	if (differ) {
+	if (differ && verbose) {
 		LOG_ERROR("**** Verification failure! ****");
 		LOG_ERROR("target_hash %x%x%x...%x%x%x",
 			target_hash[0], target_hash[1], target_hash[2],
@@ -1562,44 +1666,34 @@ static int esp_flash_verify_bank_hash(struct target *target,
 	return differ ? ERROR_FAIL : ERROR_OK;
 }
 
-COMMAND_HELPER(esp_algo_flash_parse_cmd_verify_bank_hash, struct target *target)
+static COMMAND_HELPER(esp_algo_flash_parse_cmd_verify_bank_hash, struct target *target)
 {
-	if (CMD_ARGC < 2 || CMD_ARGC > 3)
+	if (CMD_ARGC < 2 || CMD_ARGC > 4)
 		return ERROR_COMMAND_SYNTAX_ERROR;
 
 	uint32_t offset = 0;
+	bool verbose = true;
 
-	if (CMD_ARGC > 2)
-		COMMAND_PARSE_NUMBER(u32, CMD_ARGV[2], offset);
+	for (unsigned int i = 2; i < CMD_ARGC; ++i) {
+		if (strcmp("quiet", CMD_ARGV[i]) == 0)
+			verbose = false;
+		else
+			COMMAND_PARSE_NUMBER(u32, CMD_ARGV[i], offset);
+	}
 
-	return esp_flash_verify_bank_hash(target, offset, CMD_ARGV[1]);
+	return esp_flash_verify_bank_hash(target, offset, CMD_ARGV[1], verbose);
 }
 
-COMMAND_HANDLER(esp_algo_flash_cmd_verify_bank_hash)
-{
-	return CALL_COMMAND_HANDLER(esp_algo_flash_parse_cmd_verify_bank_hash,
-		get_current_target(CMD_CTX));
-}
-
-COMMAND_HELPER(esp_algo_flash_parse_cmd_clock_boost, struct target *target)
+static COMMAND_HELPER(esp_algo_flash_parse_cmd_clock_boost, struct target *target)
 {
 	if (CMD_ARGC != 1) {
 		command_print(CMD, "Clock boost flag not specified!");
 		return ERROR_FAIL;
 	}
 
-	int boost = 0;
-
-	if (0 == strcmp("on", CMD_ARGV[0])) {
-		LOG_DEBUG("Clock boost is on");
-		boost = 1;
-	} else if (0 == strcmp("off", CMD_ARGV[0])) {
-		LOG_DEBUG("Clock boost is off");
-		boost = 0;
-	} else {
-		LOG_DEBUG("unknown flag");
-		return ERROR_FAIL;
-	}
+	bool boost = 0;
+	COMMAND_PARSE_BOOL(CMD_ARGV[0], boost, "on", "off");
+	LOG_DEBUG("Clock boost is %s", boost ? "on" : "off");
 
 	struct flash_bank *bank;
 	int retval = esp_algo_target_to_flash_bank(target, &bank, "flash", true);
@@ -1609,13 +1703,7 @@ COMMAND_HELPER(esp_algo_flash_parse_cmd_clock_boost, struct target *target)
 	return esp_algo_flash_boost_clock_freq(bank, boost);
 }
 
-COMMAND_HANDLER(esp_algo_flash_cmd_clock_boost)
-{
-	return CALL_COMMAND_HANDLER(esp_algo_flash_parse_cmd_clock_boost,
-		get_current_target(CMD_CTX));
-}
-
-COMMAND_HELPER(esp_algo_flash_parse_cmd_stub_log, struct target *target)
+static COMMAND_HELPER(esp_algo_flash_parse_cmd_stub_log, struct target *target)
 {
 	if (CMD_ARGC != 1) {
 		LOG_TARGET_ERROR(target, "Stub log flag not specified!");
@@ -1623,17 +1711,8 @@ COMMAND_HELPER(esp_algo_flash_parse_cmd_stub_log, struct target *target)
 	}
 
 	bool log_stat = false;
-
-	if (0 == strcmp("on", CMD_ARGV[0])) {
-		LOG_TARGET_INFO(target, "Stub logs enabled!");
-		log_stat = true;
-	} else if (0 == strcmp("off", CMD_ARGV[0])) {
-		LOG_TARGET_INFO(target, "Stub logs disabled");
-		log_stat = false;
-	} else {
-		LOG_TARGET_ERROR(target, "unknown flag");
-		return ERROR_FAIL;
-	}
+	COMMAND_PARSE_BOOL(CMD_ARGV[0], log_stat, "on", "off");
+	LOG_TARGET_INFO(target, "Stub logs %s!", log_stat ? "enabled" : "disabled");
 
 	int ret = esp_algo_flash_set_stub_log(target, "irom", log_stat);
 	if (ret != ERROR_OK)
@@ -1641,14 +1720,40 @@ COMMAND_HELPER(esp_algo_flash_parse_cmd_stub_log, struct target *target)
 	ret = esp_algo_flash_set_stub_log(target, "drom", log_stat);
 	if (ret != ERROR_OK)
 		return ret;
+
 	return esp_algo_flash_set_stub_log(target, "flash", log_stat);
 }
 
-COMMAND_HANDLER(esp_algo_flash_cmd_stub_log)
+COMMAND_HANDLER(esp_algo_flash_cmd_clock_boost)
 {
-	return CALL_COMMAND_HANDLER(esp_algo_flash_parse_cmd_stub_log,
-		get_current_target(CMD_CTX));
+	return CALL_COMMAND_HANDLER(esp_algo_flash_parse_cmd_clock_boost, get_current_target(CMD_CTX));
 }
+
+COMMAND_HANDLER(esp_algo_flash_cmd_verify_bank_hash)
+{
+	return CALL_COMMAND_HANDLER(esp_algo_flash_parse_cmd_verify_bank_hash, get_current_target(CMD_CTX));
+}
+
+#define COMMAND_HANDLER_SMP(name, handler) \
+COMMAND_HANDLER(name) \
+{ \
+	struct target *target = get_current_target(CMD_CTX); \
+	if (target->smp) { \
+		struct target_list *head; \
+		foreach_smp_target(head, target->smp_targets) { \
+			int ret = CALL_COMMAND_HANDLER(handler, head->target); \
+			if (ret != ERROR_OK) \
+				return ret; \
+		} \
+		return ERROR_OK; \
+	} \
+	return CALL_COMMAND_HANDLER(handler, target); \
+}
+
+COMMAND_HANDLER_SMP(esp_algo_flash_cmd_stub_log, esp_algo_flash_parse_cmd_stub_log)
+COMMAND_HANDLER_SMP(esp_algo_flash_cmd_encryption, esp_algo_flash_cmd_set_encryption)
+COMMAND_HANDLER_SMP(esp_algo_flash_cmd_compression, esp_algo_flash_cmd_set_compression)
+COMMAND_HANDLER_SMP(esp_algo_flash_cmd_appimage_flashoff, esp_algo_flash_cmd_appimage_flashoff_do)
 
 const struct command_registration esp_flash_exec_flash_command_handlers[] = {
 	{

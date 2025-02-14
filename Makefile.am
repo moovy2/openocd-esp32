@@ -19,6 +19,23 @@ nobase_dist_pkgdata_DATA = \
 	contrib/libdcc/README \
 	contrib/60-openocd.rules
 
+esptoolsdir = $(pkgdatadir)/espressif/tools
+dist_esptools_DATA = \
+	tools/esp_detect_config.py \
+	tools/esp_problems_hints.yml
+
+esp32c6stubsdir = $(pkgdatadir)/espressif/stub_bins/esp32c6
+dist_esp32c6stubs_DATA = \
+	contrib/loaders/flash/espressif/esp32c6/inc/stub_flash_idf_binary_code.inc \
+	contrib/loaders/flash/espressif/esp32c6/inc/stub_flash_idf_binary_data.inc \
+	contrib/loaders/flash/espressif/esp32c6/stub_flash_idf_image.h
+
+esp32h2stubsdir = $(pkgdatadir)/espressif/stub_bins/esp32h2
+dist_esp32h2stubs_DATA = \
+	contrib/loaders/flash/espressif/esp32h2/inc/stub_flash_idf_binary_code.inc \
+	contrib/loaders/flash/espressif/esp32h2/inc/stub_flash_idf_binary_data.inc \
+	contrib/loaders/flash/espressif/esp32h2/stub_flash_idf_image.h
+
 SUBDIRS =
 DIST_SUBDIRS =
 bin_PROGRAMS =
@@ -26,14 +43,19 @@ noinst_LTLIBRARIES =
 info_TEXINFOS =
 dist_man_MANS =
 EXTRA_DIST =
+DISTCLEANFILES =
 
 if INTERNAL_JIMTCL
 SUBDIRS += jimtcl
 DIST_SUBDIRS += jimtcl
+EXTRA_DIST += jimtcl/configure.gnu
+# jimtcl from 0.79 to 0.82 miss cleaning jsmn.o
+DISTCLEANFILES += jimtcl/jsmn/jsmn.o
 endif
 
 # common flags used in openocd build
 AM_CFLAGS = $(GCC_WARNINGS)
+AM_LDFLAGS =
 
 AM_CPPFLAGS = $(HOST_CPPFLAGS)\
 			  -I$(top_srcdir)/src \
@@ -44,7 +66,15 @@ AM_CPPFLAGS = $(HOST_CPPFLAGS)\
 if INTERNAL_JIMTCL
 AM_CPPFLAGS += -I$(top_srcdir)/jimtcl \
 			   -I$(top_builddir)/jimtcl
+else
+AM_CPPFLAGS += $(JIMTCL_CFLAGS)
 endif
+
+if USE_GCOV
+AM_CFLAGS += --coverage
+AM_LDFLAGS += --coverage
+endif
+
 EXTRA_DIST += \
 	BUGS \
 	HACKING \
@@ -60,10 +90,13 @@ EXTRA_DIST += \
 	LICENSES/preferred/BSD-2-Clause-Views \
 	LICENSES/preferred/BSD-3-Clause \
 	LICENSES/preferred/BSD-Source-Code \
+	LICENSES/preferred/CC0-1.0 \
 	LICENSES/preferred/GFDL-1.2 \
 	LICENSES/preferred/gfdl-1.2.texi.readme \
 	LICENSES/preferred/GPL-2.0 \
+	LICENSES/preferred/LGPL-2.1 \
 	LICENSES/preferred/MIT \
+	LICENSES/stand-alone/Apache-2.0 \
 	LICENSES/stand-alone/GPL-3.0 \
 	tools/logger.pl \
 	tools/rlink_make_speed_table \
@@ -107,9 +140,13 @@ TCL_PATH = tcl
 TCL_FILES = find $(srcdir)/$(TCL_PATH) -name '*.cfg' -o -name '*.tcl' -o -name '*.txt' -o -name 'esp-config.json' | \
 		sed -e 's,^$(srcdir)/$(TCL_PATH),,'
 
+# The git log command below generates many empty text lines with only some space characters
+# for indentation purposes, so use sed to trim all trailing whitespace.
 dist-hook:
 	if test -d $(srcdir)/.git -a \( ! -e $(distdir)/ChangeLog -o -w $(distdir)/ChangeLog \) ; then \
-		git --git-dir $(srcdir)/.git log | $(srcdir)/tools/git2cl/git2cl > $(distdir)/ChangeLog ; \
+		git --git-dir $(srcdir)/.git log --date=short --pretty="format:%ad  %aN <%aE>%n%n%w(0,4,6)* %B" \
+		| sed 's/[[:space:]]*$$//' > $(distdir)/ChangeLog.tmp && \
+		mv $(distdir)/ChangeLog.tmp $(distdir)/ChangeLog; \
 	fi
 	for i in $$($(TCL_FILES)); do \
 		j="$(distdir)/$(TCL_PATH)/$$i" && \
@@ -133,9 +170,9 @@ uninstall-hook:
 
 distclean-local:
 	rm -rf Doxyfile doxygen
-	rm -f $(srcdir)/jimtcl/configure.gnu
+	-rm -f $(srcdir)/jimtcl/configure.gnu
 
-DISTCLEANFILES = doxygen.log
+DISTCLEANFILES += doxygen.log
 
 METASOURCES = AUTO
 

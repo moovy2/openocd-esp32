@@ -36,7 +36,7 @@ class GDBConnectTestsImpl:
 
     def test_gdb_detach(self):
         """
-            Check that gdb detach command is working properly.
+            Check that gdb detach command removes flash breakpoints
             1) Add flash SW breakpoints in the appropriate sub-test.
             2) Run to SW breakpoints and expect to hit.
             3) Drop gdb connection with pkill command.
@@ -45,16 +45,11 @@ class GDBConnectTestsImpl:
             6) Add a breakpoints into latter line of SW breakpoints tagged as gdb_detach3.
             7) Run the test and check that will chip hit to the SW breakpoints. If it will, detach command is not working properly.
         """
-        # Filling HW breakpoints to test SW breakpoints
-        bps = ['unused_func0', 'unused_func1']
-        if testee_info.chip == "esp32c3":
-            # esp32c3 has 8 HW breakpoint slots
-            # 6 dummy HW breaks to fill in HW breaks slots and make OpenOCD using SW breakpoints in flash (seen as HW ones by GDB)
-            bps += ['unused_func2', 'unused_func3', 'unused_func4', 'unused_func5', 'unused_func6', 'unused_func7']
+        # Filling HW breakpoints slots to make test using SW flash breakpoints
+        self.fill_hw_bps()
         # flash SW breakpoints
-        bps += ['gdb_detach0', 'gdb_detach1', 'gdb_detach2']
+        bps = ['gdb_detach0', 'gdb_detach1', 'gdb_detach2']
 
-        self.select_sub_test(105)
         for each_bp in bps:
             self.add_bp(each_bp)
 
@@ -72,9 +67,9 @@ class GDBConnectTestsImpl:
             self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 5)
 
         self.gdb.target_reset()
-        self.gdb.add_bp('app_main')
+        self.add_bp('app_main')
         self.run_to_bp(dbg.TARGET_STOP_REASON_BP, 'app_main')
-        self.select_sub_test(105)
+        self.select_sub_test(self.id())
 
         # Add a breakpoint to the last line of the test function.
         self.add_bp('gdb_detach3')

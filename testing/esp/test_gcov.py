@@ -62,73 +62,39 @@ class GcovDataFile:
         get_logger().debug('Gcov file dir "%s" filename "%s"', dir_name, file_name)
         _,file_ext = os.path.splitext(file_name)
         # get_logger().debug('Gcov filename "%s" ext "%s"', fname, file_ext)
-        if testee_info.idf_ver < IdfVersion.fromstr('5.0'):
-            if file_ext == '.gcov':
-                gcov_name = path
-            else:
-                out = subprocess.check_output(['%sgcov' % toolchain, '-ib', path], stderr=subprocess.STDOUT)
-                get_logger().debug('GCOV: %s', out)
-                gcov_name = '%s.gcov' % file_name
-            f = open(gcov_name)
-            for ln in f:
-                if ln.startswith(self.GCOV_FILE_TAG):
-                    fname = ln[len(self.GCOV_FILE_TAG):].rstrip()
-                    fname = self.create_data_dict(fname, proj_path, build_path)
-                elif ln.startswith(self.GCOV_FUNC_TAG):
-                    func = ln[len(self.GCOV_FUNC_TAG):].rstrip().split(',')
-                    if len(func) < 3:
-                        raise GcovDataError('Too short func line')
-                    get_logger().debug('Found func "%s"', func[2])
-                    self.data[self._cur_file]['funcs'][func[2]] = {'sl' : func[0], 'ec' : func[1]}
-                elif ln.startswith(self.GCOV_LCOUNT_TAG):
-                    lcount = ln[len(self.GCOV_LCOUNT_TAG):].rstrip().split(',')
-                    if len(lcount) < 2:
-                        raise GcovDataError('Too short LC line')
-                    self.data[self._cur_file]['lc'].append(lcount)
-                elif ln.startswith(self.GCOV_BRANCH_TAG):
-                    br = ln[len(self.GCOV_BRANCH_TAG):].rstrip().split(',')
-                    if len(br) < 2:
-                        raise GcovDataError('Too short BR line')
-                    self.data[self._cur_file]['br'].append(br)
-                elif ln.startswith(self.GCOV_VERSION_TAG):
-                    pass
-                else:
-                    raise GcovDataError('Unknown tag in line "%s"' % ln)
-            f.close()
+        if file_ext == '.json':
+            gcov_name = path
+            f = open(path)
         else:
-            if file_ext == '.json':
-                gcov_name = path
-                f = open(path)
+            out = subprocess.check_output(['%sgcov' % toolchain, '-j', path], stderr=subprocess.STDOUT)
+            get_logger().debug('GCOV: %s', out)
+            #TODO check toolchain version, not IDF
+            if testee_info.idf_ver < IdfVersion.fromstr('5.1'):
+                gcov_gz_file = file_name
             else:
-                out = subprocess.check_output(['%sgcov' % toolchain, '-j', path], stderr=subprocess.STDOUT)
-                get_logger().debug('GCOV: %s', out)
-                #TODO check toolchain version, not IDF
-                if testee_info.idf_ver == IdfVersion.fromstr('5.0'):
-                    gcov_gz_file = file_name
+                gcov_gz_file = os.path.splitext(file_name)[0] # remove .gcda extension.
+            gcov_name = '%s.gcov.json.gz' % gcov_gz_file
+            f = gzip.open(gcov_name, 'rb')
+        json_file = json.load(f)
+        for each_files in  json_file["files"]:
+            fname = str(each_files['file'])
+            fname = self.create_data_dict(fname, proj_path, build_path)
+            func_names = []
+            for each_lines in each_files["lines"]:
+                if not each_lines["function_name"] in func_names:
+                    func_names.append(each_lines["function_name"])
+                    self.data[self._cur_file]['funcs'][each_lines["function_name"]] = {'sl' : each_lines["line_number"], 'ec' : each_lines["count"]}
                 else:
-                    gcov_gz_file = os.path.splitext(file_name)[0] # remove .gcda extension.
-                gcov_name = '%s.gcov.json.gz' % gcov_gz_file
-                f = gzip.open(gcov_name, 'rb')
-            json_file = json.load(f)
-            for each_files in  json_file["files"]:
-                fname = str(each_files['file'])
-                fname = self.create_data_dict(fname, proj_path, build_path)
-                func_names = []
-                for each_lines in each_files["lines"]:
-                    if not each_lines["function_name"] in func_names:
-                        func_names.append(each_lines["function_name"])
-                        self.data[self._cur_file]['funcs'][each_lines["function_name"]] = {'sl' : each_lines["line_number"], 'ec' : each_lines["count"]}
-                    else:
-                        self.data[self._cur_file]['lc'].append([each_lines["line_number"], each_lines["count"]])
-                    if each_lines["branches"] is not None:
-                        for each_branch in each_lines["branches"]:
-                            branch_stat = ''
-                            if each_branch["count"] == 0:
-                                branch_stat = 'nottaken'
-                            else:
-                                branch_stat = 'taken'
-                            self.data[self._cur_file]['br'].append([each_lines["line_number"], branch_stat])
-            f.close()
+                    self.data[self._cur_file]['lc'].append([each_lines["line_number"], each_lines["count"]])
+                if each_lines["branches"] is not None:
+                    for each_branch in each_lines["branches"]:
+                        branch_stat = ''
+                        if each_branch["count"] == 0:
+                            branch_stat = 'nottaken'
+                        else:
+                            branch_stat = 'taken'
+                        self.data[self._cur_file]['br'].append([each_lines["line_number"], branch_stat])
+        f.close()
 
     def __eq__(self, other):
         for fname in self.data:
@@ -221,9 +187,7 @@ class GcovTestsImpl:
             if file.endswith(".gcda"):
                 os.remove(os.path.join(stripped_data_dir, file))
         # TODO check toolchain version, not IDF
-        if testee_info.idf_ver < IdfVersion.fromstr('5.0'):
-            ref_data_path = os.path.join(self.test_app_cfg.build_src_dir(), 'main', 'gcov_tests.gcda.gcov')
-        elif testee_info.idf_ver == IdfVersion.fromstr('5.0'):
+        if testee_info.idf_ver < IdfVersion.fromstr('5.1'):
             ref_data_path = os.path.join(self.test_app_cfg.build_src_dir(), 'main', 'gcov_tests.c.gcda.gcov.json')
         else:
             ref_data_path = os.path.join(self.test_app_cfg.build_src_dir(), 'main', 'gcov_tests.c.gcov.json')
@@ -239,9 +203,7 @@ class GcovTestsImpl:
             })
         src_path = os.path.join(self.test_app_cfg.build_src_dir(), 'main', 'helper_funcs.c')
         data_path = os.path.join(self.test_app_cfg.build_obj_dir(), 'esp-idf', 'main', 'CMakeFiles', MAIN_COMP_BUILD_DIR_NAME, 'helper_funcs.c.gcda')
-        if testee_info.idf_ver < IdfVersion.fromstr('5.0'):
-            ref_data_path = os.path.join(self.test_app_cfg.build_src_dir(), 'main', 'helper_funcs.gcda.gcov')
-        elif testee_info.idf_ver == IdfVersion.fromstr('5.0'):
+        if testee_info.idf_ver < IdfVersion.fromstr('5.1'):
             ref_data_path = os.path.join(self.test_app_cfg.build_src_dir(), 'main', 'helper_funcs.c.gcda.gcov.json')
         else:
             ref_data_path = os.path.join(self.test_app_cfg.build_src_dir(), 'main', 'helper_funcs.c.gcov.json')
@@ -260,6 +222,7 @@ class GcovTestsImpl:
             if os.path.exists(f['data_path']):
                 os.remove(f['data_path'])
 
+    @skip_for_chip_and_ver(['5.4', 'latest'], ['esp32s3'], "skipped - OCD-1048")
     def test_simple_gdb(self):
         """
             This test checks that GCOV data can be dumped by means of GDB
@@ -275,7 +238,6 @@ class GcovTestsImpl:
             7) Repeat steps 3-6 several times.
             8) Finally delete breakpoint
         """
-        self.select_sub_test(300)
         bp = self.gdb.add_bp('esp_gcov_dump')
         for i in range(5):
             self.resume_exec()
@@ -291,7 +253,7 @@ class GcovTestsImpl:
                 gcov_data_files.append(GcovDataFile(self.toolchain, f['data_path'], self.src_dirs,
                                         self.proj_path, self.test_app_cfg.build_obj_dir()))
             if i == 0:
-                # after first test iteration gcov data should be equal to reference ones
+                # after the first test iteration gcov data should be equal to reference ones
                 for k in range(len(gcov_data_files)):
                     self.assertEqual(gcov_data_files[k], self.gcov_files[k]['ref_data'])
             else:
@@ -311,11 +273,8 @@ class GcovTestsImpl:
                         self.assertEqual(len(d_lines), len(self.gcov_files[n]['d_lines']))
                         for k in range(len(d_lines)):
                             self.assertEqual(self.gcov_files[n]['d_lines'][k][0], d_lines[k][0])
-                            if testee_info.idf_ver < IdfVersion.fromstr('latest'):
-                                self.assertEqual(self.gcov_files[n]['d_lines'][k][1] + i, d_lines[k][1])
-                            else:
-                                # With idf master, line execution count is not cumulative. OCD-720
-                                self.assertEqual(self.gcov_files[n]['d_lines'][k][1] + i, d_lines[k][1] + i)
+                            self.assertEqual(self.gcov_files[n]['d_lines'][k][1] + i, d_lines[k][1])
+
         self.gdb.delete_bp(bp)
 
     def test_simple_oocd(self):
@@ -329,7 +288,6 @@ class GcovTestsImpl:
             5) Run 'esp32 gcov dump'.
             6) Compare collected data with the reference one.
         """
-        self.select_sub_test(300)
         self.resume_exec()
         # TODO: better way to ensure that test app called esp_gcov_dump
         time.sleep(3)
@@ -337,9 +295,7 @@ class GcovTestsImpl:
         self.oocd.gcov_dump(False)
         # parse and check gcov data
         data_path = os.path.join(self.test_app_cfg.build_obj_dir(), 'esp-idf', 'main', 'CMakeFiles', MAIN_COMP_BUILD_DIR_NAME, 'gcov_tests.c.gcda')
-        if testee_info.idf_ver < IdfVersion.fromstr('5.0'):
-            ref_data_path = os.path.join(self.test_app_cfg.build_src_dir(), 'main', 'gcov_tests.gcda.gcov')
-        elif testee_info.idf_ver == IdfVersion.fromstr('5.0'):
+        if testee_info.idf_ver < IdfVersion.fromstr('5.1'):
             ref_data_path = os.path.join(self.test_app_cfg.build_src_dir(), 'main', 'gcov_tests.c.gcda.gcov.json')
         else:
             ref_data_path = os.path.join(self.test_app_cfg.build_src_dir(), 'main', 'gcov_tests.c.gcov.json')
@@ -348,9 +304,7 @@ class GcovTestsImpl:
         f2 = GcovDataFile(self.toolchain, ref_data_path, self.src_dirs, self.proj_path)
         self.assertEqual(f, f2)
         data_path = os.path.join(self.test_app_cfg.build_obj_dir(), 'esp-idf', 'main', 'CMakeFiles', MAIN_COMP_BUILD_DIR_NAME, 'helper_funcs.c.gcda')
-        if testee_info.idf_ver < IdfVersion.fromstr('5.0'):
-            ref_data_path = os.path.join(self.test_app_cfg.build_src_dir(), 'main', 'helper_funcs.gcda.gcov')
-        elif testee_info.idf_ver == IdfVersion.fromstr('5.0'):
+        if testee_info.idf_ver < IdfVersion.fromstr('5.1'):
             ref_data_path = os.path.join(self.test_app_cfg.build_src_dir(), 'main', 'helper_funcs.c.gcda.gcov.json')
         else:
             ref_data_path = os.path.join(self.test_app_cfg.build_src_dir(), 'main', 'helper_funcs.c.gcov.json')
@@ -370,7 +324,6 @@ class GcovTestsImpl:
             6) Run 'mon esp32 gcov'.
             7) Compare collected data with the reference one.
         """
-        self.select_sub_test(301)
         self.resume_exec()
         # wait some time to let app run and generate gcov data
         time.sleep(3)
@@ -396,7 +349,6 @@ class GcovTestsImpl:
             5) Run 'esp32 gcov'.
             6) Compare collected data with the reference one.
         """
-        self.select_sub_test(301)
         self.resume_exec()
         # wait some time to let app run and generate gcov data
         time.sleep(3)
@@ -410,7 +362,6 @@ class GcovTestsImpl:
         self.assertTrue(os.path.exists(os.path.join(self.gcov_prefix, self.strip_gcov_path(data_path))))
         data_path = os.path.join(self.test_app_cfg.build_obj_dir(), 'esp-idf', 'main', 'CMakeFiles', MAIN_COMP_BUILD_DIR_NAME, 'helper_funcs.c.gcda')
         self.assertTrue(os.path.exists(os.path.join(self.gcov_prefix, self.strip_gcov_path(data_path))))
-
 
 ########################################################################
 #              TESTS DEFINITION WITH SPECIAL TESTS                     #
@@ -434,14 +385,12 @@ class GcovTestAppTestsSingle(DebuggerGenericTestAppTests):
         self.test_app_cfg.bin_dir = os.path.join('output', 'apptrace_gcov_single')
         self.test_app_cfg.build_dir = os.path.join('builds', 'apptrace_gcov_single')
 
-
 class GcovTestsDual(GcovTestAppTestsDual, GcovTestsImpl):
     """ Test cases via GDB in dual core mode
     """
     def setUp(self):
         GcovTestAppTestsDual.setUp(self)
         GcovTestsImpl.setUp(self)
-
 
 class GcovTestsSingle(GcovTestAppTestsSingle, GcovTestsImpl):
     """ Test cases via GDB in single core mode

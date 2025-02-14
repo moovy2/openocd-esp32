@@ -840,7 +840,7 @@ static int xscale_debug_entry(struct target *target)
 	struct arm *arm = &xscale->arm;
 	uint32_t pc;
 	uint32_t buffer[10];
-	unsigned i;
+	unsigned int i;
 	int retval;
 	uint32_t moe;
 
@@ -1118,7 +1118,7 @@ static int xscale_resume(struct target *target, int current,
 	LOG_DEBUG("-");
 
 	if (target->state != TARGET_HALTED) {
-		LOG_WARNING("target not halted");
+		LOG_TARGET_ERROR(target, "not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
@@ -1382,7 +1382,7 @@ static int xscale_step(struct target *target, int current,
 	int retval;
 
 	if (target->state != TARGET_HALTED) {
-		LOG_WARNING("target not halted");
+		LOG_TARGET_ERROR(target, "not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
@@ -1515,7 +1515,7 @@ static int xscale_deassert_reset(struct target *target)
 	 */
 	{
 		uint32_t address;
-		unsigned buf_cnt;
+		unsigned int buf_cnt;
 		const uint8_t *buffer = xscale_debug_handler;
 		int retval;
 
@@ -1539,11 +1539,11 @@ static int xscale_deassert_reset(struct target *target)
 		 * coprocessors, trace data, etc.
 		 */
 		address = xscale->handler_address;
-		for (unsigned binary_size = sizeof(xscale_debug_handler);
+		for (unsigned int binary_size = sizeof(xscale_debug_handler);
 			binary_size > 0;
 			binary_size -= buf_cnt, buffer += buf_cnt) {
 			uint32_t cache_line[8];
-			unsigned i;
+			unsigned int i;
 
 			buf_cnt = binary_size;
 			if (buf_cnt > 32)
@@ -1632,7 +1632,7 @@ static int xscale_full_context(struct target *target)
 	LOG_DEBUG("-");
 
 	if (target->state != TARGET_HALTED) {
-		LOG_WARNING("target not halted");
+		LOG_TARGET_ERROR(target, "not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
@@ -1705,7 +1705,7 @@ static int xscale_restore_banked(struct target *target)
 	int i, j;
 
 	if (target->state != TARGET_HALTED) {
-		LOG_WARNING("target not halted");
+		LOG_TARGET_ERROR(target, "not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
@@ -1781,7 +1781,7 @@ static int xscale_read_memory(struct target *target, target_addr_t address,
 		count);
 
 	if (target->state != TARGET_HALTED) {
-		LOG_WARNING("target not halted");
+		LOG_TARGET_ERROR(target, "not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
@@ -1880,7 +1880,7 @@ static int xscale_write_memory(struct target *target, target_addr_t address,
 		count);
 
 	if (target->state != TARGET_HALTED) {
-		LOG_WARNING("target not halted");
+		LOG_TARGET_ERROR(target, "not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
@@ -2073,7 +2073,7 @@ static int xscale_set_breakpoint(struct target *target,
 	struct xscale_common *xscale = target_to_xscale(target);
 
 	if (target->state != TARGET_HALTED) {
-		LOG_WARNING("target not halted");
+		LOG_TARGET_ERROR(target, "not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
@@ -2163,7 +2163,7 @@ static int xscale_unset_breakpoint(struct target *target,
 	struct xscale_common *xscale = target_to_xscale(target);
 
 	if (target->state != TARGET_HALTED) {
-		LOG_WARNING("target not halted");
+		LOG_TARGET_ERROR(target, "not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
@@ -2210,7 +2210,7 @@ static int xscale_remove_breakpoint(struct target *target, struct breakpoint *br
 	struct xscale_common *xscale = target_to_xscale(target);
 
 	if (target->state != TARGET_HALTED) {
-		LOG_ERROR("target not halted");
+		LOG_TARGET_ERROR(target, "not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
@@ -2232,7 +2232,7 @@ static int xscale_set_watchpoint(struct target *target,
 	uint32_t dbcon_value = buf_get_u32(dbcon->value, 0, 32);
 
 	if (target->state != TARGET_HALTED) {
-		LOG_ERROR("target not halted");
+		LOG_TARGET_ERROR(target, "not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
@@ -2296,7 +2296,7 @@ static int xscale_add_watchpoint(struct target *target,
 		return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 	}
 
-	if (watchpoint->value)
+	if (watchpoint->mask != WATCHPOINT_IGNORE_DATA_VALUE_MASK)
 		LOG_WARNING("xscale does not support value, mask arguments; ignoring");
 
 	/* check that length is a power of two */
@@ -2336,7 +2336,7 @@ static int xscale_unset_watchpoint(struct target *target,
 	uint32_t dbcon_value = buf_get_u32(dbcon->value, 0, 32);
 
 	if (target->state != TARGET_HALTED) {
-		LOG_WARNING("target not halted");
+		LOG_TARGET_ERROR(target, "not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
@@ -2369,7 +2369,7 @@ static int xscale_remove_watchpoint(struct target *target, struct watchpoint *wa
 	struct xscale_common *xscale = target_to_xscale(target);
 
 	if (target->state != TARGET_HALTED) {
-		LOG_ERROR("target not halted");
+		LOG_TARGET_ERROR(target, "not halted");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
@@ -2490,7 +2490,7 @@ static int xscale_read_trace(struct target *target)
 	unsigned int num_checkpoints = 0;
 
 	if (target->state != TARGET_HALTED) {
-		LOG_WARNING("target must be stopped to read trace data");
+		LOG_TARGET_ERROR(target, "must be stopped to read trace data");
 		return ERROR_TARGET_NOT_HALTED;
 	}
 
@@ -3131,8 +3131,8 @@ static int xscale_mmu(struct target *target, int *enabled)
 	struct xscale_common *xscale = target_to_xscale(target);
 
 	if (target->state != TARGET_HALTED) {
-		LOG_ERROR("Target not halted");
-		return ERROR_TARGET_INVALID;
+		LOG_TARGET_ERROR(target, "not halted");
+		return ERROR_TARGET_NOT_HALTED;
 	}
 	*enabled = xscale->armv4_5_mmu.mmu_enabled;
 	return ERROR_OK;
@@ -3149,8 +3149,8 @@ COMMAND_HANDLER(xscale_handle_mmu_command)
 		return retval;
 
 	if (target->state != TARGET_HALTED) {
-		command_print(CMD, "target must be stopped for \"%s\" command", CMD_NAME);
-		return ERROR_OK;
+		command_print(CMD, "Error: target must be stopped for \"%s\" command", CMD_NAME);
+		return ERROR_TARGET_NOT_HALTED;
 	}
 
 	if (CMD_ARGC >= 1) {
@@ -3179,8 +3179,8 @@ COMMAND_HANDLER(xscale_handle_idcache_command)
 		return retval;
 
 	if (target->state != TARGET_HALTED) {
-		command_print(CMD, "target must be stopped for \"%s\" command", CMD_NAME);
-		return ERROR_OK;
+		command_print(CMD, "Error: target must be stopped for \"%s\" command", CMD_NAME);
+		return ERROR_TARGET_NOT_HALTED;
 	}
 
 	bool icache = false;
@@ -3215,7 +3215,7 @@ COMMAND_HANDLER(xscale_handle_idcache_command)
 
 static const struct {
 	char name[15];
-	unsigned mask;
+	unsigned int mask;
 } vec_ids[] = {
 	{ "fiq",		DCSR_TF, },
 	{ "irq",		DCSR_TI, },
@@ -3250,7 +3250,7 @@ COMMAND_HANDLER(xscale_handle_vector_catch_command)
 			}
 		}
 		while (CMD_ARGC-- > 0) {
-			unsigned i;
+			unsigned int i;
 			for (i = 0; i < ARRAY_SIZE(vec_ids); i++) {
 				if (strcmp(CMD_ARGV[CMD_ARGC], vec_ids[i].name))
 					continue;
@@ -3268,7 +3268,7 @@ COMMAND_HANDLER(xscale_handle_vector_catch_command)
 	}
 
 	dcsr_value = buf_get_u32(dcsr_reg->value, 0, 32);
-	for (unsigned i = 0; i < ARRAY_SIZE(vec_ids); i++) {
+	for (unsigned int i = 0; i < ARRAY_SIZE(vec_ids); i++) {
 		command_print(CMD, "%15s: %s", vec_ids[i].name,
 			(dcsr_value & vec_ids[i].mask) ? "catch" : "ignore");
 	}
@@ -3347,8 +3347,8 @@ COMMAND_HANDLER(xscale_handle_trace_buffer_command)
 		return retval;
 
 	if (target->state != TARGET_HALTED) {
-		command_print(CMD, "target must be stopped for \"%s\" command", CMD_NAME);
-		return ERROR_OK;
+		command_print(CMD, "Error: target must be stopped for \"%s\" command", CMD_NAME);
+		return ERROR_TARGET_NOT_HALTED;
 	}
 
 	if (CMD_ARGC >= 1) {
@@ -3451,8 +3451,8 @@ COMMAND_HANDLER(xscale_handle_dump_trace_command)
 		return retval;
 
 	if (target->state != TARGET_HALTED) {
-		command_print(CMD, "target must be stopped for \"%s\" command", CMD_NAME);
-		return ERROR_OK;
+		command_print(CMD, "Error: target must be stopped for \"%s\" command", CMD_NAME);
+		return ERROR_TARGET_NOT_HALTED;
 	}
 
 	if (CMD_ARGC < 1)
@@ -3514,8 +3514,8 @@ COMMAND_HANDLER(xscale_handle_cp15)
 		return retval;
 
 	if (target->state != TARGET_HALTED) {
-		command_print(CMD, "target must be stopped for \"%s\" command", CMD_NAME);
-		return ERROR_OK;
+		command_print(CMD, "Error: target must be stopped for \"%s\" command", CMD_NAME);
+		return ERROR_TARGET_NOT_HALTED;
 	}
 	uint32_t reg_no = 0;
 	struct reg *reg = NULL;

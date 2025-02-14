@@ -1,19 +1,37 @@
 stages:
   - pre_check
-  - scan_build
+  - static_analyzers
   - build_openocd
-  - build_idf4.x
-  - build_idf5.x
+  - build_idf5.0.x
+  - build_idf5.1.x
+  - build_idf5.2.x
+  - build_idf5.3.x
+  - build_idf5.4.x
   - build_idf_master
   - build_nuttx
-  - test_idf4.x
-  - test_idf5.x
+  - test_idf5.0.x
+  - test_idf5.1.x
+  - test_idf5.2.x
+  - test_idf5.3.x
+  - test_idf5.4.x
   - test_idf_master
-  - test_windows
+  - test_host
   - test_nuttx
   - coverage
-  - sanitizer_tests
-  - sanitizer_checks
+  - sanitizer_test_idf5.0.x
+  - sanitizer_test_idf5.1.x
+  - sanitizer_test_idf5.2.x
+  - sanitizer_test_idf5.3.x
+  - sanitizer_test_idf5.4.x
+  - sanitizer_test_idf_master
+  - sanitizer_test_nuttx
+  - sanitizer_check_idf5.0.x
+  - sanitizer_check_idf5.1.x
+  - sanitizer_check_idf5.2.x
+  - sanitizer_check_idf5.3.x
+  - sanitizer_check_idf5.4.x
+  - sanitizer_check_idf_master
+  - sanitizer_check_nuttx
   - deploy
   - private_deploy
   - pre_release
@@ -22,6 +40,10 @@ stages:
   - update_idf_tools
 
 image: $CI_DOCKER_REGISTRY/openocd-ci-env:1
+
+default:
+  interruptible: true
+  retry: 2
 
 variables:
 
@@ -34,7 +56,7 @@ variables:
   GCOV_BUILD_OPTS: ""
 
   # OpenOCD configuration options
-  OPENOCD_CONFIGURE_OPTS: "--disable-doxygen-html --disable-doxygen-pdf --enable-ftdi --enable-jlink --enable-ulink"
+  OPENOCD_CONFIGURE_OPTS: "--disable-doxygen-html --enable-remote-bitbang"
 
   # GitHub Tool options
   GITHUB_USER: "${GH_USER}"
@@ -56,12 +78,6 @@ variables:
   ARCHIVE_EXT: "tar.gz"
   RELEASE_DESC: "New release"
 
-  #
-  # default variables
-  ESP_TOOLCHAIN: "${ESP_MASTER_TOOLCHAIN_VER}"
-  TOOLCHAIN_PREFIX: "xtensa-esp32"
-  CHIP_NAME: "esp32"
-
 # prefix should be like a $CI_PROJECT_NAME, but we cannot use variable here
 .release_tag_filter: &release_tag_filter
   only:
@@ -74,8 +90,9 @@ variables:
     - job: build_linux_armhf
     - job: build_linux_armel
     - job: build_linux_arm64
-    - job: build_windows
-    - job: osx_code_sign
+    - job: build_windows_win32
+    - job: build_windows_win64
+    - job: macos_codesign
 
 .release_submit_action: &release_submit_action
   image: espressif/github-hub:2
@@ -95,33 +112,28 @@ before_script:
   - set -o errexit; set -o pipefail; set -o nounset
   - test "${DEBUG_SHELL:-''}" = "1" && set -x
 
-.do_osx_code_sign: &do_osx_code_sign |
-  tar -xzf ${DIST_ART_DIR}/$ARCHIVE_NAME -C ${DIST_ART_DIR} && rm ${DIST_ART_DIR}/$ARCHIVE_NAME
-  export TARGET_BINARY="${DIST_ART_DIR}/openocd-esp32/bin/openocd"
-  $PWD/tools/codesign.sh
-  $PWD/tools/notarize.sh
-  pushd ${DIST_ART_DIR}
-  ${ARCHIVE_TOOL} ${ARCHIVE_NAME} openocd-esp32/
-  rm -r openocd-esp32/
-  popd
-
-osx_code_sign:
+macos_codesign:
   stage: pre_release
   <<: *release_tag_filter
   when: on_success
-  tags:
-    - macos_shell
-  dependencies:
-   - build_macos
-   - build_macos_arm64
+  resource_group: macos_codesign
+  tags: [ "darwin", "codesign" ]
+  # list all jobs that produces macos distros
+  needs: [build_macos, build_macos_arm64]
   artifacts:
     paths:
       - ${DIST_ART_DIR}
+  variables:
+    # directory with distro archives
+    DIST_ART_DIR: dist
+    # command to unarchive distro
+    UNARCHIVE_TOOL: "tar xzf"
+    # URL to macos codesign repo
+    NOTARIZATION_SCRIPTS_GIT: "${CI_SERVER_PROTOCOL}://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}:${CI_SERVER_PORT}/espressif/macos_codesign_notarization.git"
   script:
-    - ARCHIVE_NAME=$(cat ${DIST_ART_DIR}/dist_name_macos)
-    - *do_osx_code_sign
-    - ARCHIVE_NAME=$(cat ${DIST_ART_DIR}/dist_name_macos-arm64)
-    - *do_osx_code_sign
+    - git clone -q --depth=1 ${NOTARIZATION_SCRIPTS_GIT} -b ${CI_COMMIT_REF_NAME} ||
+      git clone -q --depth=1 ${NOTARIZATION_SCRIPTS_GIT}
+    - ./macos_codesign_notarization/run.sh
 
 release_tag_draft:
   stage: release_stage1
@@ -203,57 +215,61 @@ upload_to_http:
     - echo "Archive was published there '${OOCD_DISTRO_URL}'"
     - echo "NEW_OOCD_DISTRO_URL=${OOCD_DISTRO_URL}" >> build.env
 
+.test_idf_examples:
+  stage: pre_release
+  when: manual
+  only:
+    - master
+  allow_failure: true
+  needs:
+    - job: upload_to_http
+      artifacts: true
+  variables:
+    OOCD_DISTRO_URL: ${NEW_OOCD_DISTRO_URL}
+  trigger:
+    project: espressif/esp-idf
+    strategy: depend
+    branch: ${IDF_TEST_BRANCH}
+
 test_idf_master_examples:
-  stage: pre_release
-  when: manual
-  only:
-    - master
-  allow_failure: true
+  extends:
+    - .test_idf_examples
   variables:
-    OOCD_DISTRO_URL: ${NEW_OOCD_DISTRO_URL}
     BOT_LABEL_EXAMPLE_TEST: "1"
-  needs:
-    - job: upload_to_http
-      artifacts: true
-  trigger:
-    project: espressif/esp-idf
-    strategy: depend
+    IDF_TEST_BRANCH: "master"
 
-test_idf5.x_examples:
-  stage: pre_release
-  when: manual
-  only:
-    - master
-  allow_failure: true
+test_idf5.4.x_examples:
+  extends:
+    - .test_idf_examples
   variables:
-    OOCD_DISTRO_URL: ${NEW_OOCD_DISTRO_URL}
-  needs:
-    - job: upload_to_http
-      artifacts: true
-  trigger:
-    project: espressif/esp-idf
-    branch: ${TEST_APP_IDF5_X_RELEASE_BRANCH}
-    strategy: depend
+    IDF_TEST_BRANCH: ${TEST_APP_IDF5_4_RELEASE_BRANCH}
 
-test_idf4.x_examples:
-  stage: pre_release
-  when: manual
-  only:
-    - master
-  allow_failure: true
+test_idf5.3.x_examples:
+  extends:
+    - .test_idf_examples
   variables:
-    OOCD_DISTRO_URL: ${NEW_OOCD_DISTRO_URL}
-  needs:
-    - job: upload_to_http
-      artifacts: true
-  trigger:
-    project: espressif/esp-idf
-    branch: ${TEST_APP_IDF4_X_RELEASE_BRANCH}
-    strategy: depend
+    IDF_TEST_BRANCH: ${TEST_APP_IDF5_3_RELEASE_BRANCH}
+
+test_idf5.2.x_examples:
+  extends:
+    - .test_idf_examples
+  variables:
+    IDF_TEST_BRANCH: ${TEST_APP_IDF5_2_RELEASE_BRANCH}
+
+test_idf5.1.x_examples:
+  extends:
+    - .test_idf_examples
+  variables:
+    IDF_TEST_BRANCH: ${TEST_APP_IDF5_1_RELEASE_BRANCH}
+
+test_idf5.0.x_examples:
+  extends:
+    - .test_idf_examples
+  variables:
+    IDF_TEST_BRANCH: ${TEST_APP_IDF5_0_RELEASE_BRANCH}
 
 create_coverage_reports:
   stage: coverage
-  image: $CI_DOCKER_REGISTRY/openocd-ci-env:1
   tags:
     - build
   allow_failure: true
@@ -270,29 +286,90 @@ create_coverage_reports:
     when: always
     expire_in: 1 week
   needs:
-    - job: tests_armhf_esp32_idf4.x
-    - job: tests_armhf_esp32_idf4.x_flash_encrypted
-    - job: tests_armhf_esp32s2_idf4.x
-    - job: tests_armhf_esp32s2_idf4.x_flash_encrypted
-    - job: tests_armhf_esp32s3_idf4.x
-    - job: tests_armhf_esp32c3_idf4.x
-    - job: tests_armhf_esp32c3_idf4.x_flash_encrypted
-    #- job: tests_armhf_esp32_solo_idf4.x
+    # idf 5.0.x
+    - job: tests_armhf_esp32_idf5.0.x
+    - job: tests_armhf_esp32_idf5.0.x_flash_encrypted
+    - job: tests_armhf_esp32s2_idf5.0.x
+    - job: tests_armhf_esp32s2_idf5.0.x_flash_encrypted
+    - job: tests_armhf_esp32s3_idf5.0.x_dual
+    - job: tests_armhf_esp32s3_idf5.0.x_single
+    - job: tests_armhf_esp32c2_idf5.0.x
+    - job: tests_armhf_esp32c3_idf5.0.x
+    - job: tests_armhf_esp32c3_idf5.0.x_flash_encrypted
+    # idf 5.1.x
+    - job: tests_armhf_esp32_idf5.1.x
+    - job: tests_armhf_esp32_idf5.1.x_flash_encrypted
+    - job: tests_armhf_esp32s2_idf5.1.x
+    - job: tests_armhf_esp32s2_idf5.1.x_flash_encrypted
+    - job: tests_armhf_esp32s3_idf5.1.x_dual
+    - job: tests_armhf_esp32s3_idf5.1.x_single
+    - job: tests_armhf_esp32c2_idf5.1.x
+    - job: tests_armhf_esp32c3_idf5.1.x
+    - job: tests_armhf_esp32c3_idf5.1.x_flash_encrypted
+    - job: tests_armhf_esp32c6_idf5.1.x
+    - job: tests_armhf_esp32h2_idf5.1.x
+    # idf 5.2.x
+    - job: tests_armhf_esp32_idf5.2.x
+    - job: tests_armhf_esp32_idf5.2.x_flash_encrypted
+    - job: tests_armhf_esp32s2_idf5.2.x
+    - job: tests_armhf_esp32s2_idf5.2.x_flash_encrypted
+    - job: tests_armhf_esp32s3_idf5.2.x_dual
+    - job: tests_armhf_esp32s3_idf5.2.x_single
+    - job: tests_armhf_esp32c2_idf5.2.x
+    - job: tests_armhf_esp32c3_idf5.2.x
+    - job: tests_armhf_esp32c3_idf5.2.x_flash_encrypted
+    - job: tests_armhf_esp32c6_idf5.2.x
+    - job: tests_armhf_esp32h2_idf5.2.x
+    # idf 5.3.x
+    - job: tests_armhf_esp32_idf5.3.x
+    - job: tests_armhf_esp32_idf5.3.x_flash_encrypted
+    - job: tests_armhf_esp32s2_idf5.3.x
+    - job: tests_armhf_esp32s2_idf5.3.x_flash_encrypted
+    - job: tests_armhf_esp32s3_idf5.3.x_dual
+    - job: tests_armhf_esp32s3_idf5.3.x_single
+    - job: tests_armhf_esp32c2_idf5.3.x
+    - job: tests_armhf_esp32c3_idf5.3.x
+    - job: tests_armhf_esp32c3_idf5.3.x_flash_encrypted
+    - job: tests_armhf_esp32c6_idf5.3.x
+    - job: tests_armhf_esp32h2_idf5.3.x
+    - job: tests_arm64_esp32p4_idf5.3.x
+    # idf 5.4.x
+    - job: tests_armhf_esp32_idf5.4.x
+    - job: tests_armhf_esp32_idf5.4.x_flash_encrypted
+    - job: tests_armhf_esp32s2_idf5.4.x
+    - job: tests_armhf_esp32s2_idf5.4.x_flash_encrypted
+    - job: tests_armhf_esp32s3_idf5.4.x_dual
+    - job: tests_armhf_esp32s3_idf5.4.x_single
+    - job: tests_armhf_esp32c2_idf5.4.x
+    - job: tests_armhf_esp32c3_idf5.4.x
+    - job: tests_armhf_esp32c3_idf5.4.x_flash_encrypted
+    - job: tests_arm64_esp32c5_idf5.4.x
+    - job: tests_armhf_esp32c6_idf5.4.x
+    - job: tests_arm64_esp32c61_idf5.4.x
+    - job: tests_armhf_esp32h2_idf5.4.x
+    - job: tests_arm64_esp32p4_idf5.4.x
+    # idf master
+    - job: tests_armhf_esp32
     - job: tests_armhf_esp32_flash_encrypted
     - job: tests_armhf_esp32s2
     - job: tests_armhf_esp32s2_flash_encrypted
-    - job: tests_armhf_esp32s3
-    - job: tests_armhf_esp32c3_builtin_usb_jtag
-    - job: tests_armhf_esp32c3_flash_encrypted
-    - job: tests_armhf_esp32
-    #- job: tests_armhf_esp32_solo
-    - job: tests_armhf_esp32c3
+    - job: tests_armhf_esp32s3_dual
+    - job: tests_armhf_esp32s3_single
     - job: tests_armhf_esp32c2
+    - job: tests_armhf_esp32c3
+    - job: tests_armhf_esp32c3_flash_encrypted
+    - job: tests_arm64_esp32c5
+    - job: tests_armhf_esp32c6
+    - job: tests_arm64_esp32c61
+    - job: tests_armhf_esp32h2
+    - job: tests_arm64_esp32p4
     - job: test_nuttx_esp32
     - job: test_nuttx_esp32s2
     - job: test_nuttx_esp32s3
     - job: test_nuttx_esp32c3
-    - job: tests_armhf_esp32c6_builtin_usb_jtag
+    - job: test_nuttx_esp32c6
+    - job: test_nuttx_esp32h2
+
   script:
     - mkdir -p cov_infos
     - mkdir -p dist
@@ -301,8 +378,9 @@ create_coverage_reports:
       folder_list=$(ls -d build_test_app*);
       for each_folder in $folder_list ;
       do
-      cp ${each_folder}/*.info cov_infos;
+      lcov --gcov-tool ${PWD}/${each_folder}/esp_cov_files/gcov --capture --directory ${each_folder}/esp_cov_files --output-file ${each_folder}/${each_folder}.info;
       done
+    - cp `find . -wholename "./build_test_app*/*.info" -size +0` cov_infos
     - ls -la cov_infos/
     # Creating a html report of coverage files.
     - genhtml --ignore-errors source cov_infos/*.info -o lcov_html_report/
@@ -326,7 +404,7 @@ update_idf_tools:
   allow_failure: true
   <<: *release_tag_filter
   variables:
-    TOOL_NAME: OpenOCD
+    TOOL_NAME: openocd
     TOOL_MEMBERS: openocd-esp32
     TOOL_VERSION: ${CI_COMMIT_TAG}
     TOOL_SHA256_URL: https://github.com/espressif/openocd-esp32/releases/download/${CI_COMMIT_TAG}/openocd-esp32-${CI_COMMIT_TAG}-checksum.sha256
@@ -341,4 +419,3 @@ include:
   - '.gitlab/ci/test.yml'
   - '.gitlab/ci/test-sanitizers.yml'
   - '.gitlab/ci/pre-check.yml'
-

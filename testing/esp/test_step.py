@@ -50,7 +50,7 @@ class StepTestsImpl():
 
     def tearDown(self):
         # restore ISR masking
-        self.isr_masking(on=(self.old_masking == 'ON'))
+        self.isr_masking(on=self.old_masking)
 
     def test_step_over_bp(self):
         """
@@ -63,12 +63,13 @@ class StepTestsImpl():
             6) Check that PC changed correctly.
             7) Repeat steps 3-6 several times for every type of breakpoints.
         """
+        # Filling HW breakpoints slots to make test using SW flash breakpoints
+        self.fill_hw_bps(keep_avail=2)
         bps = ['_step_over_bp_break1', '_step_over_bp_break2',  # HW BPs
             '_step_over_bp_break3', '_step_over_bp_break4',  # SW flash BPs
             '_step_over_bp_break5', '_step_over_bp_break6']  # SW RAM BPs
         for f in bps:
             self.add_bp(f)
-        self.select_sub_test(103)
         for i in range(2):
             # step from and over HW BPs
             self.do_step_over_bp_check(['_step_over_bp_break1', '_step_over_bp_break2'])
@@ -102,7 +103,7 @@ class StepTestsImpl():
         self.wps = {'s_count1': None}
         for e in self.wps:
             self.add_wp(e, 'rw')
-        self.select_sub_test(100)
+        self.select_sub_test("blink")
         for i in range(2):
             # 'count' read
             self.do_step_over_wp_check('blink_task')
@@ -114,7 +115,6 @@ class StepTestsImpl():
     @only_for_arch(['xtensa'])
     def test_step_window_exception(self):
         # start the test, stopping at the window_exception_test function
-        self.select_sub_test(200)
         bp = self.gdb.add_bp('_recursive_func')
         self.resume_exec()
         rsn = self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 5)
@@ -128,7 +128,7 @@ class StepTestsImpl():
             get_logger().info('Step in {}'.format(i))
             self.step_in()
         # restore ISR masking
-        self.isr_masking(on=(self.old_masking == 'ON'))
+        self.isr_masking(on=self.old_masking)
 
         # check that we have reached the end of recursion
         self.assertEqual(int(self.gdb.data_eval_expr('levels')), 1)
@@ -139,7 +139,7 @@ class StepTestsImpl():
             self.step_out()
 
         cur_frame = self.gdb.get_current_frame()
-        self.assertEqual(cur_frame['func'], 'window_exception_test')
+        self.assertEqual(cur_frame['func'], 'window_exception_task')
 
     @only_for_arch(['xtensa'])
     def test_step_in_window_exception_handler(self):
@@ -154,7 +154,6 @@ class StepTestsImpl():
             6) After every step backtrace is checked.
         """
         # start the test, stopping at the window_exception_test function
-        self.select_sub_test(200)
         bp = self.gdb.add_bp('_WindowOverflow8')
         self.run_to_bp_and_check_basic(dbg.TARGET_STOP_REASON_BP, "_WindowOverflow8")
         self.gdb.delete_bp(bp)
@@ -187,7 +186,6 @@ class StepTestsImpl():
             9) Increment counter.
             10) Repeat steps 3-9 several times.
         """
-        self.select_sub_test(102)
         val = 100
         self.add_bp('_scratch_reg_using_task_break')
         for i in range(5):
@@ -195,7 +193,7 @@ class StepTestsImpl():
             rsn = self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 5)
             self.assertEqual(rsn, dbg.TARGET_STOP_REASON_BP)
             cur_frame = self.gdb.get_current_frame()
-            self.assertEqual(cur_frame['func'], 'scratch_reg_using_task')
+            self.assertEqual(cur_frame['func'], 'step_over_insn_using_scratch_reg_task')
             self.step(insn=True)
             reg_val = self.gdb.get_reg('a3')
             self.assertEqual(reg_val, val)
@@ -214,7 +212,6 @@ class StepTestsImpl():
         5) Interrupt target (ctrl+c).
         6) Repeat steps 1-5 several times.
         """
-        self.select_sub_test(104)
         self.add_bp("fib_while")
 
         for i in range(3):
@@ -226,7 +223,7 @@ class StepTestsImpl():
             rsn = self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 5)
             self.assertEqual(rsn, dbg.TARGET_STOP_REASON_BP)
             cur_frame = self.gdb.get_current_frame()
-            self.assertEqual(cur_frame['func'], "fibonacci_calc")
+            self.assertEqual(cur_frame['func'], "fibonacci_calc_task")
 
             for s in range(3):
                 get_logger().info('line test ' + str(s))
@@ -253,7 +250,7 @@ class StepTestsImpl():
             rsn = self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 5)
             self.assertEqual(rsn, dbg.TARGET_STOP_REASON_BP)
             cur_frame = self.gdb.get_current_frame()
-            self.assertEqual(cur_frame['func'], "fibonacci_calc")
+            self.assertEqual(cur_frame['func'], "fibonacci_calc_task")
 
             for m in range(3):
                 get_logger().info('mixed test ' + str(m))
@@ -287,7 +284,6 @@ class StepTestsImpl():
             4) Repeat 2-4 steps
 
         """
-        self.select_sub_test(201)
         self.add_bp('nested_bottom')
         for i in range(3):
 
@@ -312,7 +308,7 @@ class StepTestsImpl():
             self.assertEqual(cur_frame['func'], 'nested_top')
             self.step_out()
             cur_frame = self.gdb.get_current_frame()
-            self.assertEqual(cur_frame['func'], 'step_out_of_function_test')
+            self.assertEqual(cur_frame['func'], 'step_out_of_function_task')
 
     @only_for_arch(['xtensa'])
     def test_step_level5_int(self):
@@ -323,7 +319,6 @@ class StepTestsImpl():
             3) Step into the handler
             4) Return from the interrupt
         """
-        self.select_sub_test(202)
         self.add_bp('_Level5Vector')
         for _ in range(3):
             self.resume_exec()
@@ -342,24 +337,27 @@ class StepTestsImpl():
             self.assertNotEqual(self.gdb.get_current_frame()['func'], 'xt_highint5')
 
     def isr_masking(self, on=True):
-        # This function is used for Xtensa only
-        if testee_info.arch != "xtensa":
-            return
-        if on:
-            self.gdb.monitor_run("xtensa maskisr on", 5)
-        else:
-            self.gdb.monitor_run("xtensa maskisr off", 5)
+        if testee_info.arch == "xtensa":
+            if on:
+                self.gdb.monitor_run("xtensa maskisr on", 5)
+            else:
+                self.gdb.monitor_run("xtensa maskisr off", 5)
+        else: #riscv32
+            if on:
+                self.oocd.cmd_exec("riscv set_maskisr steponly")
+            else:
+                self.oocd.cmd_exec("riscv set_maskisr off")
 
     def get_isr_masking(self):
-        # This function is used for Xtensa only
-        if testee_info.arch != "xtensa":
-            return ""
-        _, s = self.gdb.monitor_run("xtensa maskisr", 5, output_type='stdout')
-        return s.strip('\\n\\n').split("mode: ", 1)[1]
+        if testee_info.arch == "xtensa":
+            _, s = self.gdb.monitor_run("xtensa maskisr", 5, output_type='stdout')
+            return s.strip('\\n\\n').split("mode: ", 1)[1] == 'ON'
+        #riscv32
+        s = self.oocd.cmd_exec('riscv set_maskisr')
+        return s.strip() == 'riscv interrupt mask steponly'
 
     @only_for_arch(['xtensa'])
-    # TODO: Fails at esp32s3.Will be enabled after fix
-    @skip_for_chip(['esp32s3'])
+    @skip_for_chip(['esp32s3'], 'skipped - OCD-1006')
     def test_step_over_intlevel_disabled_isr(self):
         """
             This test checks ps.intlevel value after step instruction while ISRs are masked
@@ -373,7 +371,6 @@ class StepTestsImpl():
             8) Check PS and PC has correct value
             9) Repeat steps 3 several times
         """
-        self.select_sub_test(120)
         self.add_bp('_step_over_intlevel_ch')
         for i in range(3):
             get_logger().info('test_step_over_intlevel_disabled_isr loop ' + str(i))
@@ -381,19 +378,59 @@ class StepTestsImpl():
             rsn = self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 5)
             self.assertEqual(rsn, dbg.TARGET_STOP_REASON_BP)
             cur_frame = self.gdb.get_current_frame()
-            self.assertEqual(cur_frame['func'], 'step_over_inst_changing_intlevel')
+            self.assertEqual(cur_frame['func'], 'step_over_inst_changing_intlevel_task')
             old_pc = self.gdb.get_reg('pc')
             old_ps = self.gdb.get_reg('ps')
             old_masking = self.get_isr_masking()
             self.isr_masking(on=True)
             self.step(insn=True)
-            self.isr_masking(on=(old_masking == 'ON'))
+            self.isr_masking(on=old_masking)
             new_ps = self.gdb.get_reg('ps')
             new_pc = self.gdb.get_reg('pc')
             self.assertTrue(((new_pc - old_pc) == 2) or ((new_pc - old_pc) == 3))
             get_logger().info('PS_old 0x%X', old_ps)
             get_logger().info('PS_new 0x%X', new_ps)
             self.assertEqual(old_ps & 0xF, new_ps & 0xF)
+
+    @only_for_arch(['riscv32'])
+    def test_step_isr_masking_check_mstatus(self):
+        """
+            This test checks that set_maskisr steponly setting does not change unrelated mstatus fields
+            1) Run to the start of the assembly loop with CSR instructions modifying mstatus
+            2) Setup relevant registers and step over each instruction both with masking disabled and enabled
+            3) Compare values in mstatus after stepping
+            4) Repeat for several values of mstatus
+        """
+        bp = self.add_bp('step_isr_masking_check_mstatus_task')
+        self.run_to_bp_and_check_basic(dbg.TARGET_STOP_REASON_BP, "step_isr_masking_check_mstatus_task")
+        self.gdb.delete_bp(bp)
+
+        def get_csr_step_results(mstatus, src_val, mask_isr):
+            self.oocd.set_reg('mstatus', mstatus)
+            self.oocd.set_reg('a0', src_val)
+            self.isr_masking(on=mask_isr)
+            self.oocd.cmd_exec("step")
+            return self.oocd.get_reg('mstatus')
+
+        def test_step_results(mstatus, src_val):
+            check = get_csr_step_results(mstatus, src_val, True)
+            test = get_csr_step_results(mstatus, src_val, False)
+            self.assertEqual(check, test)
+
+        start = self.oocd.get_reg('pc')
+        for test_mstatus in (0x0, 0xf, 0xfffffff0, 0xffffffff):
+            # Check clearing bits other than *ie
+            test_step_results(test_mstatus, 0xfffffff0)
+
+            # Check setting all bits
+            test_step_results(test_mstatus, 0xffffffff)
+
+            # Check writing value not clearing *ie bits
+            test_step_results(test_mstatus, 0xf & test_mstatus)
+
+            # Return to the start of the loop
+            while self.oocd.get_reg('pc') != start:
+                self.oocd.cmd_exec("step")
 
 ########################################################################
 #              TESTS DEFINITION WITH SPECIAL TESTS                     #
