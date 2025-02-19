@@ -18,6 +18,7 @@
 #include <target/semihosting_common.h>
 #include <target/riscv/debug_defines.h>
 #include <target/riscv/program.h>
+#include <target/riscv/riscv_reg.h>
 
 #include "esp_semihosting.h"
 #include "esp_riscv_apptrace.h"
@@ -431,8 +432,8 @@ static int pie_movx_access(struct target *target, struct reg *reg, uint8_t *buf,
 	riscv_reg_t reg_val;
 	if (buf) {
 		reg_val = buf_get_u64(buf, 0, riscv_xlen(target));
-		riscv_set_register(target, GDB_REGNO_S0, reg_val);
-		riscv_flush_registers(target);
+		riscv_reg_set(target, GDB_REGNO_S0, reg_val);
+		riscv_reg_flush_all(target);
 	}
 	int ret = execute_pie_inst(target, inst);
 	if (ret != ERROR_OK)
@@ -440,7 +441,7 @@ static int pie_movx_access(struct target *target, struct reg *reg, uint8_t *buf,
 	if (!buf) {
 		target->reg_cache->reg_list[GDB_REGNO_S0].valid = false;
 		target->reg_cache->reg_list[GDB_REGNO_S0].dirty = false;
-		riscv_get_register(target, &reg_val, GDB_REGNO_S0);
+		riscv_reg_get(target, &reg_val, GDB_REGNO_S0);
 	}
 	buf_set_u64(reg->value, 0, reg->size, reg_val);
 	return ERROR_OK;
@@ -450,8 +451,8 @@ static int pie_ldst_access(struct target *target, struct reg *reg, uint8_t *buf,
 {
 	uint8_t saved_mem[16];
 	target_addr_t temp_mem = target->working_area_phys - ESP32P4_NON_CACHEABLE_OFFSET;
-	riscv_set_register(target, GDB_REGNO_S0, temp_mem);
-	riscv_flush_registers(target);
+	riscv_reg_set(target, GDB_REGNO_S0, temp_mem);
+	riscv_reg_flush_all(target);
 	esp32p4_read_memory(target, temp_mem, 4, 4, saved_mem);
 	if (buf)
 		esp32p4_write_memory(target, temp_mem, 1, DIV_ROUND_UP(reg->size, 8), buf);
@@ -482,17 +483,17 @@ static int pie_access(struct reg *reg, uint8_t *buf)
 		return ERROR_FAIL;
 
 	riscv_reg_t reg_val_s0, reg_val_pie;
-	riscv_get_register(target, &reg_val_s0, GDB_REGNO_S0);
-	riscv_get_register(target, &reg_val_pie, GDB_REGNO_CSR0 + CSR_MEXT_PIE_STATUS);
+	riscv_reg_get(target, &reg_val_s0, GDB_REGNO_S0);
+	riscv_reg_get(target, &reg_val_pie, GDB_REGNO_CSR0 + CSR_MEXT_PIE_STATUS);
 	int state = get_field(reg_val_pie, PIE_STATE_MASK);
 	if (state == PIE_STATE_OFF)
-		riscv_set_register(target, GDB_REGNO_CSR0 + CSR_MEXT_PIE_STATUS, reg_val_pie | PIE_STATE_INIT);
+		riscv_reg_set(target, GDB_REGNO_CSR0 + CSR_MEXT_PIE_STATUS, reg_val_pie | PIE_STATE_INIT);
 
 	int ret = (is_ldst_inst ? pie_ldst_access : pie_movx_access) (target, reg, buf, inst);
 
-	riscv_set_register(target, GDB_REGNO_S0, reg_val_s0);
+	riscv_reg_set(target, GDB_REGNO_S0, reg_val_s0);
 	if (state == PIE_STATE_OFF)
-		riscv_set_register(target, GDB_REGNO_CSR0 + CSR_MEXT_PIE_STATUS, reg_val_pie);
+		riscv_reg_set(target, GDB_REGNO_CSR0 + CSR_MEXT_PIE_STATUS, reg_val_pie);
 	return ret;
 }
 

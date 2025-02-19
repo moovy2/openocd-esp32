@@ -10,6 +10,7 @@
 
 #include <target/target.h>
 #include <target/riscv/riscv.h>
+#include <target/riscv/riscv_reg.h>
 #include <target/riscv/debug_defines.h>
 #include "esp_riscv_apptrace.h"
 #include "esp_riscv_algorithm.h"
