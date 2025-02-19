@@ -472,7 +472,7 @@ static struct target_type *get_target_type(struct target *target)
 	}
 }
 
-static struct riscv_private_config *alloc_default_riscv_private_config(void)
+struct riscv_private_config *alloc_default_riscv_private_config(void)
 {
 	struct riscv_private_config * const config = malloc(sizeof(*config));
 	if (!config) {

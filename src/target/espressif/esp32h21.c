@@ -178,6 +178,13 @@ static int esp32h21_target_create(struct target *target)
 		return ERROR_FAIL;
 
 	riscv_info_init(target, &esp_riscv->riscv);
+	struct riscv_private_config *config = target->private_config;
+	if (!config) {
+		config = alloc_default_riscv_private_config();
+		if (!config)
+			return ERROR_FAIL;
+		target->private_config = config;
+	}
 
 	return ERROR_OK;
 }
