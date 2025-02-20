@@ -569,6 +569,12 @@ static bool check_dbgbase_exists(struct target *target)
 static int dmstatus_read(struct target *target, uint32_t *dmstatus,
 		bool authenticated)
 {
+	/* ESPRESSIF */
+	uint32_t dtmcontrol;
+	if (dtmcs_scan(target->tap, 0, &dtmcontrol) != ERROR_OK ||
+			get_field(dtmcontrol, DTM_DTMCS_VERSION) != DTM_DTMCS_VERSION_1_0)
+		return ERROR_FAIL;
+
 	int result = dm_read(target, dmstatus, DM_DMSTATUS);
 	if (result != ERROR_OK)
 		return result;
