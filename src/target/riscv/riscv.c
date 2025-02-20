@@ -3066,6 +3066,10 @@ static int riscv_mmu(struct target *target, bool *enabled)
 	if (!riscv_virt2phys_mode_is_sw(target))
 		return ERROR_OK;
 
+	/* ESPRESSIF */
+	if (target->state != TARGET_HALTED)
+		return ERROR_OK;
+
 	/* Don't use MMU in explicit or effective M (machine) mode */
 	riscv_reg_t priv;
 	if (riscv_reg_get(target, &priv, GDB_REGNO_PRIV) != ERROR_OK) {
