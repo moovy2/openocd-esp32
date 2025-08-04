@@ -373,7 +373,7 @@ static struct riscv_debug_reg_ctx get_riscv_debug_reg_ctx(const struct target *t
 static void log_debug_reg(struct target *target, enum riscv_debug_reg_ordinal reg,
 		riscv_reg_t value, const char *file, unsigned int line, const char *func)
 {
-	if (debug_level < LOG_LVL_DEBUG)
+	if (!LOG_LEVEL_IS(LOG_LVL_DEBUG))
 		return;
 	const struct riscv_debug_reg_ctx context = get_riscv_debug_reg_ctx(target);
 	char * const buf = malloc(riscv_debug_reg_to_s(NULL, reg, context, value, RISCV_DEBUG_REG_HIDE_UNNAMED_0) + 1);
@@ -761,7 +761,7 @@ int riscv013_execute_abstract_command(struct target *target, uint32_t command,
 {
 	assert(cmderr);
 	*cmderr = CMDERR_NONE;
-	if (debug_level >= LOG_LVL_DEBUG) {
+	if (LOG_LEVEL_IS(LOG_LVL_DEBUG)) {
 		switch (get_field(command, DM_COMMAND_CMDTYPE)) {
 		case 0:
 			LOG_DEBUG_REG(target, AC_ACCESS_REGISTER, command);
@@ -3144,7 +3144,7 @@ static int execute_autofence(struct target *target)
 static void log_memory_access128(target_addr_t address, uint64_t value_h,
 		uint64_t value_l, bool is_read)
 {
-	if (debug_level < LOG_LVL_DEBUG)
+	if (!LOG_LEVEL_IS(LOG_LVL_DEBUG))
 		return;
 
 	char fmt[80];
@@ -3156,7 +3156,7 @@ static void log_memory_access128(target_addr_t address, uint64_t value_h,
 static void log_memory_access64(target_addr_t address, uint64_t value,
 		unsigned int size_bytes, bool is_read)
 {
-	if (debug_level < LOG_LVL_DEBUG_IO) /* ESPRESSIF */
+	if (!LOG_LEVEL_IS(LOG_LVL_DEBUG_IO)) /* ESPRESSIF */
 		return;
 
 	char fmt[80];
