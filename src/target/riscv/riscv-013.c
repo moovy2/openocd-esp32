@@ -1864,35 +1864,40 @@ static int reset_dm(struct target *target)
 	 * without checking that `abstractcs.busy` is low is
 	 * prohibited.
 	 */
+	int result;
 	uint32_t dmcontrol;
-	int result = dm_read(target, &dmcontrol, DM_DMCONTROL);
-	if (result != ERROR_OK)
-		return result;
-
-	if (get_field32(dmcontrol, DM_DMCONTROL_DMACTIVE)) {
-		/* `dmcontrol.hartsel` is not changed. */
-		dmcontrol = (dmcontrol & DM_DMCONTROL_HARTSELLO) |
-			(dmcontrol & DM_DMCONTROL_HARTSELHI);
-		LOG_TARGET_DEBUG(target, "Initiating DM reset.");
-		result = dm_write(target, DM_DMCONTROL, dmcontrol);
+	if (!strcmp(target->cmd_name, "esp32c5.lp.cpu")) {
+		/* Espressif - for esp32c5-lpcore we need to reset first, before we attempt to read */
+		dm_write(target, DM_DMCONTROL, 0);
+	} else {
+		result = dm_read(target, &dmcontrol, DM_DMCONTROL);
 		if (result != ERROR_OK)
 			return result;
-
-		const time_t start = time(NULL);
-		LOG_TARGET_DEBUG(target, "Waiting for the DM to acknowledge reset.");
-		do {
-			result = dm_read(target, &dmcontrol, DM_DMCONTROL);
+		if (get_field32(dmcontrol, DM_DMCONTROL_DMACTIVE)) {
+			/* `dmcontrol.hartsel` is not changed. */
+			dmcontrol = (dmcontrol & DM_DMCONTROL_HARTSELLO) |
+				(dmcontrol & DM_DMCONTROL_HARTSELHI);
+			LOG_TARGET_DEBUG(target, "Initiating DM reset.");
+			result = dm_write(target, DM_DMCONTROL, dmcontrol);
 			if (result != ERROR_OK)
 				return result;
 
-			if (time(NULL) - start > riscv_get_command_timeout_sec()) {
-				LOG_TARGET_ERROR(target, "DM didn't acknowledge reset in %d s. "
-						"Increase the timeout with 'riscv set_command_timeout_sec'.",
-						riscv_get_command_timeout_sec());
-				return ERROR_TIMEOUT_REACHED;
-			}
-		} while (get_field32(dmcontrol, DM_DMCONTROL_DMACTIVE));
-		LOG_TARGET_DEBUG(target, "DM reset initiated.");
+			const time_t start = time(NULL);
+			LOG_TARGET_DEBUG(target, "Waiting for the DM to acknowledge reset.");
+			do {
+				result = dm_read(target, &dmcontrol, DM_DMCONTROL);
+				if (result != ERROR_OK)
+					return result;
+
+				if (time(NULL) - start > riscv_get_command_timeout_sec()) {
+					LOG_TARGET_ERROR(target, "DM didn't acknowledge reset in %d s. "
+							"Increase the timeout with 'riscv set_command_timeout_sec'.",
+							riscv_get_command_timeout_sec());
+					return ERROR_TIMEOUT_REACHED;
+				}
+			} while (get_field32(dmcontrol, DM_DMCONTROL_DMACTIVE));
+			LOG_TARGET_DEBUG(target, "DM reset initiated.");
+		}
 	}
 
 	LOG_TARGET_DEBUG(target, "Activating the DM.");
