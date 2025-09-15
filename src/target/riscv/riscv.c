@@ -2894,9 +2894,14 @@ static int resume_prep(struct target *target, bool current,
 		 * 1. ebreak used in software breakpoint;
 		 * 2. a trigger that is taken just before the instruction that triggered it is retired.
 		 */
+		/* Espressif - we expect to be able to resume off of a breakpoint without it being hit first,
+			e.g. after single-stepping onto a breakpoint */
+		riscv_reg_t pc;
+		if (riscv_reg_get(target, &pc, GDB_REGNO_PC) != ERROR_OK)
+			return ERROR_FAIL;
 		if (target->debug_reason == DBG_REASON_BREAKPOINT
 		    || (target->debug_reason == DBG_REASON_WATCHPOINT
-			&& r->need_single_step)) {
+			&& r->need_single_step) || breakpoint_find(target, pc)) {
 			if (old_or_new_riscv_step_impl(target, current, address, handle_breakpoints,
 					false /* callbacks are not called */) != ERROR_OK)
 				return ERROR_FAIL;
