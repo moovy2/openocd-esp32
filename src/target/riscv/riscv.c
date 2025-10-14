@@ -5493,7 +5493,7 @@ COMMAND_HANDLER(riscv_exec_progbuf)
 	if (target->state != TARGET_HALTED) {
 		LOG_TARGET_ERROR(target, "exec_progbuf: Can't execute "
 				"program buffer, target not halted.");
-		return ERROR_FAIL;
+		return ERROR_TARGET_NOT_HALTED;
 	}
 
 	if (riscv_progbuf_size(target) == 0) {
@@ -6107,7 +6107,7 @@ static int riscv_step_rtos_hart(struct target *target)
 
 	if (target->state != TARGET_HALTED) {
 		LOG_TARGET_ERROR(target, "Hart isn't halted before single step!");
-		return ERROR_FAIL;
+		return ERROR_TARGET_NOT_HALTED;
 	}
 	r->on_step(target);
 	if (r->step_current_hart(target) != ERROR_OK)
@@ -6297,7 +6297,7 @@ int riscv_enumerate_triggers(struct target *target)
 
 	if (target->state != TARGET_HALTED) {
 		LOG_TARGET_ERROR(target, "Unable to enumerate triggers: target not halted.");
-		return ERROR_FAIL;
+		return ERROR_TARGET_NOT_HALTED;
 	}
 
 	riscv_reg_t orig_tselect;
