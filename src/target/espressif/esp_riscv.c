@@ -671,6 +671,19 @@ static bool esp_riscv_is_bp_set_in_flash(struct target *target, struct esp_commo
 	return esp_common_flash_breakpoint_exists(esp, pc);
 }
 
+static bool esp_riscv_is_bp_wp_set_by_program(struct target *target)
+{
+	if (target->smp) {
+		struct target_list *head;
+		foreach_smp_target(head, target->smp_targets) {
+			if (esp_riscv_is_bp_set_by_program(head->target) || esp_riscv_is_wp_set_by_program(head->target))
+				return true;
+		}
+		return false;
+	}
+	return esp_riscv_is_bp_set_by_program(target) || esp_riscv_is_wp_set_by_program(target);
+}
+
 int esp_riscv_resume(struct target *target, bool current, target_addr_t address,
 		bool handle_breakpoints, bool debug_execution)
 {
@@ -687,19 +700,8 @@ int esp_riscv_resume(struct target *target, bool current, target_addr_t address,
 	/* If one of the target stopped due to breakpoint/watchpoint set by program,
 	 * we need to handle_breakpoints to make single step
 	 */
-	if (!handle_breakpoints) {
-		if (target->smp) {
-			struct target_list *head;
-			foreach_smp_target(head, target->smp_targets) {
-				if (esp_riscv_is_bp_set_by_program(head->target) || esp_riscv_is_wp_set_by_program(head->target)) {
-					handle_breakpoints = true;
-					break;
-				}
-			}
-		} else {
-			handle_breakpoints = esp_riscv_is_bp_set_by_program(target) || esp_riscv_is_wp_set_by_program(target);
-		}
-	}
+	if (!handle_breakpoints)
+		handle_breakpoints = esp_riscv_is_bp_wp_set_by_program(target);
 
 	struct esp_common *esp = target_to_esp_common(target);
 	if (target->smp) {
@@ -727,6 +729,12 @@ int esp_riscv_step(struct target *target, bool current, target_addr_t address, b
 {
 	struct esp_common *esp = target_to_esp_common(target);
 	struct esp_flash_breakpoint *flash_bps = esp->flash_brps.brps;
+
+	/* If one of the target stopped due to breakpoint/watchpoint set by program,
+	 * we need to handle_breakpoints to make single step
+	 */
+	if (!handle_breakpoints)
+		handle_breakpoints = esp_riscv_is_bp_wp_set_by_program(target);
 
 	riscv_reg_t pc = 0;
 	if (riscv_reg_get(target, &pc, GDB_REGNO_PC) != ERROR_OK) {
