@@ -93,8 +93,6 @@ class DebuggerSpecialTestsImpl:
         self.run_to_bp_and_check(dbg.TARGET_STOP_REASON_BP, 'vTaskDelay', ['vTaskDelay0'])
         self.clear_bps()
 
-    @skip_for_chip(['esp32c5'], "skipped - OCD-1224")
-    @skip_for_chip(['esp32h4'], "skipped - OCD-1332")
     def test_debugging_works_after_hw_reset(self):
         """
             This test checks that debugging works after HW reset.
@@ -139,8 +137,6 @@ class DebuggerSpecialTestsImpl:
             self.run_to_bp_and_check_location(dbg.TARGET_STOP_REASON_SIGTRAP, 'target_bp_func2', 'target_wp_var2_2')
 
     @skip_for_chip(['esp32', 'esp32s3'], "skipped - OCD-868")
-    @skip_for_chip(['esp32c5'], "skipped - OCD-1224")
-    @skip_for_chip(['esp32h4'], "skipped - OCD-1332")
     def test_debugging_works_after_esptool_flash(self):
         """
             This test checks that debugging works after flashing with esptool.
@@ -422,7 +418,6 @@ class PsramTestsImpl:
 class DebuggerSpecialTestsDual(DebuggerGenericTestAppTestsDual, DebuggerSpecialTestsImpl):
     """ Test cases for dual core mode
     """
-    @skip_for_chip(['esp32h4'], "skipped - OCD-1332")
     def test_cores_states_after_esptool_connection(self):
         """
             This test checks that cores are in running or halted state after esptool connection.
