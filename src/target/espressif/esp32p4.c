@@ -331,8 +331,11 @@ static int esp32p4_examine_end(struct target *target)
 			(target->hw_rev >= 5
 				&& (!strcmp(reg_name, "mnmicause")
 					|| !strcmp(reg_name, "mnmipc")
-					|| !strcmp(reg_name, "mintstatus"))))
+					|| !strcmp(reg_name, "mintstatus")))) {
 			target->reg_cache->reg_list[i].exist = false;
+			free(target->reg_cache->reg_list[i].value);
+			target->reg_cache->reg_list[i].value = NULL;
+		}
 	}
 
 	return ERROR_OK;
