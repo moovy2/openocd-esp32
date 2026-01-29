@@ -2185,10 +2185,6 @@ static int examine(struct target *target)
 		target->debug_reason = DBG_REASON_UNDEFINED;
 	}
 
-	/*
-		TODO: ESPRESSIF:add proper support for halt group
-		The problem shows up on ESP32-H4 when core1 is halted first. */
-	/*
 	if (target->smp) {
 		if (set_group(target, &info->haltgroup_supported, target->smp, HALT_GROUP) != ERROR_OK)
 			return ERROR_FAIL;
@@ -2199,7 +2195,6 @@ static int examine(struct target *target)
 			LOG_TARGET_INFO(target, "Core %d could not be made part of halt group %d.",
 					info->index, target->smp);
 	}
-	*/
 
 	/* Some regression suites rely on seeing 'Examined RISC-V core' to know
 	 * when they can connect with gdb/telnet.
