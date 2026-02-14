@@ -410,6 +410,11 @@ def appcpu_early_hw_bps(self):
         self.resume_exec()
         self.gdb.wait_target_state(dbg.TARGET_STATE_STOPPED, 10)
         check_bp_hit_on_cpu(1)
+    # Get out of the early code to ensure system is in consistent state for following tests
+    # See "CPU0 needs to disable the cache in system_early_init" comment in ESP-IDF
+    self.gdb.delete_bp(self.bpns.pop())
+    self.add_bp('app_main', hw=True)
+    self.run_to_bp_and_check_basic(dbg.TARGET_STOP_REASON_BP, 'app_main')
 
 class DebuggerBreakpointTestsDual(DebuggerGenericTestAppTestsDual, BreakpointTestsImpl):
     """ Test cases for breakpoints in dual core mode
@@ -422,12 +427,8 @@ class DebuggerBreakpointTestsDual(DebuggerGenericTestAppTestsDual, BreakpointTes
     def test_2cores_concurrently_hit_bps(self):
         two_cores_concurrently_hit_bps(self)
 
-    @skip_for_chip(['esp32p4'], "skipped - OCD-1288")
     def test_appcpu_early_hw_bps(self):
         appcpu_early_hw_bps(self)
-
-    def test_bp_ignore_count(self):
-        BreakpointTestsImpl.test_bp_ignore_count(self)
 
 class DebuggerBreakpointTestsDualEncrypted(DebuggerGenericTestAppTestsDualEncrypted, BreakpointTestsImpl):
     """ Breakpoint test cases on encrypted flash in dual core mode
