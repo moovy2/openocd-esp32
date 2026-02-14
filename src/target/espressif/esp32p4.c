@@ -87,8 +87,12 @@
 	(addr) < (ESP32P4_HPROM_NON_CACHEABLE_ADDR_HIGH))
 #define ESP32P4_ADDR_IS_HPROM(addr) (ESP32P4_ADDR_IS_HPROM_NONCACHEABLE(addr) || ESP32P4_ADDR_IS_HPROM_CACHEABLE(addr))
 
-#define ESP32P4_ADDR_IS_CACHEABLE(addr) (ESP32P4_ADDR_IS_L2MEM(addr) || ESP32P4_ADDR_IS_EXMEM(addr) || \
-	ESP32P4_ADDR_IS_HPROM(addr))
+#define ESP32P4_ADDR_IN_CACHE_REGION(addr) (ESP32P4_ADDR_IS_L2MEM(addr) || \
+	ESP32P4_ADDR_IS_EXMEM(addr) || ESP32P4_ADDR_IS_HPROM(addr))
+
+#define ESP32P4_ADDR_IS_CACHEABLE(addr) (ESP32P4_ADDR_IS_IRAM_CACHEABLE(addr) || \
+	ESP32P4_ADDR_IS_EXRAM_CACHEABLE(addr) || ESP32P4_ADDR_IS_HPROM_CACHEABLE(addr))
+
 
 #define ESP32P4_TCM_ADDR_LOW                    0x30100000U
 #define ESP32P4_TCM_ADDR_HIGH                   0x30102000U
@@ -657,7 +661,7 @@ static int esp32p4_sync_cache(struct target *target, target_addr_t address, uint
 
 static void esp32p4_cache_writeback(struct target *target, target_addr_t address, uint32_t size)
 {
-	if (ESP32P4_ADDR_IS_CACHEABLE(address)) {
+	if (ESP32P4_ADDR_IN_CACHE_REGION(address)) {
 		/* Write-back is for dcache and l2 cache only */
 		if (esp32p4_sync_cache(target, address, size,
 				ESP32P4_CACHE_MAP_L1_DCACHE | ESP32P4_CACHE_MAP_L2_CACHE, ESP32P4_CACHE_SYNC_WRITEBACK) != ERROR_OK)
@@ -667,7 +671,7 @@ static void esp32p4_cache_writeback(struct target *target, target_addr_t address
 
 static void esp32p4_cache_invalidate(struct target *target, target_addr_t address, uint32_t size)
 {
-	if (ESP32P4_ADDR_IS_CACHEABLE(address)) {
+	if (ESP32P4_ADDR_IN_CACHE_REGION(address)) {
 		/* Don't invalidate the L2CACHE here. We don't know if it has been written back to the PSRAM yet. */
 		if (esp32p4_sync_cache(target, address, size,
 				ESP32P4_CACHE_MAP_L1_CACHE, ESP32P4_CACHE_SYNC_INVALIDATE) != ERROR_OK)
