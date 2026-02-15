@@ -6332,7 +6332,8 @@ int riscv_init_registers(struct target *target)
 				range_list_t *entry;
 				list_for_each_entry(entry, &info->expose_csr, list)
 					if (entry->low <= csr_num && csr_num <= entry->high) {
-						LOG_TARGET_DEBUG(target, "Exposing additional CSR %d (name=%s)",
+						/* ESPRESSIF */
+						LOG_TARGET_DEBUG_IO(target, "Exposing additional CSR %d (name=%s)",
 								csr_num, r->name);
 						r->exist = true;
 						break;
@@ -6384,7 +6385,8 @@ int riscv_init_registers(struct target *target)
 			char **reg_names = info->custom_register_names.reg_names;
 			r->name = reg_names[custom_reg_index];
 
-			LOG_TARGET_DEBUG(target, "Exposing additional custom register %d (name=%s)", reg_num, r->name);
+			/* ESPRESSIF */
+			LOG_TARGET_DEBUG_IO(target, "Exposing additional custom register %d (name=%s)", reg_num, r->name);
 
 			custom_within_range++;
 			if (custom_within_range > range->high - range->low) {
