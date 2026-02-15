@@ -586,6 +586,8 @@ class DebuggerTestAppTests(DebuggerTestsBase):
             if not self.main_reached:
                 self.gdb.disconnect()
                 self.oocd.stop()
+                if self.uart_reader:
+                    self.uart_reader.stop()
                 cmd = ['esptool.py', '-p', self.port_name, '--no-stub', 'chip_id']
                 subprocess.run(cmd)
                 os._exit(os.EX_TEMPFAIL)
