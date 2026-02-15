@@ -406,7 +406,7 @@ class PsramTestsImpl:
         # Filling HW breakpoints slots to make test using SW flash breakpoints
         self.fill_hw_bps(keep_avail=2)
         # 2 HW breaks + 1 flash SW break + RAM SW break
-        bps = ['gh264_psram_check_bp_1', 'gh264_psram_check_bp_2', 'gh264_psram_check_bp_3']
+        bps = ['app_main', 'gh264_psram_check_bp_1', 'gh264_psram_check_bp_2', 'gh264_psram_check_bp_3']
         for f in bps:
             self.add_bp(f)
         for i in range(3):
