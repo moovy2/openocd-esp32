@@ -175,7 +175,6 @@ tests_esp32c5:
       optional: true
   variables:
     CHIP_NAME: "esp32c5"
-    ESPTOOL_PORT: "/dev/serial_ports/ttyACM-esp32"
     TEST_RUN_BOARD_OPTS: "-b esp32c5-builtin -p test_*.*Single"
 
 tests_esp32c5_lpcore:
@@ -199,7 +198,6 @@ tests_esp32c6:
       optional: true
   variables:
     CHIP_NAME: "esp32c6"
-    ESPTOOL_PORT: "/dev/serial_ports/ttyACM-esp32"
     TEST_RUN_BOARD_OPTS: "-b esp32c6-builtin -p test_*.*Single4MB test_*.*Single"
 
 # TODO OCD-1227
@@ -224,7 +222,6 @@ tests_esp32c61:
       optional: true
   variables:
     CHIP_NAME: "esp32c61"
-    ESPTOOL_PORT: "/dev/serial_ports/ttyACM-esp32"
     TEST_RUN_BOARD_OPTS: "-b esp32c61-builtin -p test_*.*Single"
 
 tests_esp32h2:
@@ -243,7 +240,6 @@ tests_esp32h2:
       optional: true
   variables:
     CHIP_NAME: "esp32h2"
-    ESPTOOL_PORT: "/dev/serial_ports/ttyACM-esp32"
     TEST_RUN_BOARD_OPTS: "-b esp32h2-builtin -p test_*.*Single4MB test_*.*Single"
 
 # TODO jtag runner
@@ -375,7 +371,6 @@ tests_esp32h4:
   allow_failure: true
   variables:
     CHIP_NAME: "esp32h4"
-    ESPTOOL_PORT: "/dev/serial_ports/ttyACM-esp32"
     TEST_RUN_BOARD_OPTS: "-b esp32h4-builtin -e test_*.*Encrypted *.*.test_big_binary *.*.test_big_binary_compressed"
 
 tests_esp32h21:
@@ -395,5 +390,4 @@ tests_esp32h21:
   allow_failure: true
   variables:
     CHIP_NAME: "esp32h21"
-    ESPTOOL_PORT: "/dev/serial_ports/ttyACM-esp32"
     TEST_RUN_BOARD_OPTS: "-b esp32h21-builtin -p test_*.*Single4MB test_*.*Single -e *.*.test_big_binary *.*.test_big_binary_compressed"

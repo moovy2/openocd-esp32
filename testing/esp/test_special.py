@@ -109,7 +109,10 @@ class DebuggerSpecialTestsImpl:
         # avoid simultaneous access to UART with SerialReader
         if self.uart_reader:
             self.uart_reader.pause()
-        cmd = ['esptool.py', '-p', self.port_name, '--no-stub', 'chip_id']
+        cmd = ['esptool.py', '-p', self.port_name, 'chip_id']
+        # TODO OCD-868
+        if testee_info.hw_id == 'esp32s3-builtin':
+            cmd = ['esptool.py', '-p', self.port_name, '--no-stub', 'chip_id']
         proc = subprocess.run(cmd)
         proc.check_returncode()
         if self.uart_reader:
@@ -136,7 +139,7 @@ class DebuggerSpecialTestsImpl:
             # watchpoint hit on read var in 'target_bp_func2'
             self.run_to_bp_and_check_location(dbg.TARGET_STOP_REASON_SIGTRAP, 'target_bp_func2', 'target_wp_var2_2')
 
-    @skip_for_chip(['esp32', 'esp32s3'], "skipped - OCD-868")
+    @skip_for_hw_id(['esp32s3-builtin'], "skipped - OCD-868")
     def test_debugging_works_after_esptool_flash(self):
         """
             This test checks that debugging works after flashing with esptool.
@@ -151,7 +154,7 @@ class DebuggerSpecialTestsImpl:
         time.sleep(2.0)
         assert self.port_name is not None
         tested_args = [
-            ('-p', self.port_name, '--no-stub'),
+            ('-p', self.port_name),
         ]
         with open(os.path.join(self.test_app_cfg.build_bins_dir(), 'flasher_args.json'), 'rb') as f:
             args = json.load(f)
@@ -438,7 +441,10 @@ class DebuggerSpecialTestsDual(DebuggerGenericTestAppTestsDual, DebuggerSpecialT
         # avoid simultaneous access to UART with SerialReader
         if self.uart_reader:
             self.uart_reader.pause()
-        cmd = ['esptool.py', '-p', self.port_name, '--no-stub', 'chip_id']
+        cmd = ['esptool.py', '-p', self.port_name, 'chip_id']
+        # TODO OCD-868
+        if testee_info.hw_id == 'esp32s3-builtin':
+            cmd = ['esptool.py', '-p', self.port_name, '--no-stub', 'chip_id']
         proc = subprocess.run(cmd)
         proc.check_returncode()
         if self.uart_reader:

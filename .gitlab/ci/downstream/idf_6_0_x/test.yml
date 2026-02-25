@@ -155,7 +155,6 @@ tests_esp32c5_idf6.0.x:
     - job: fetch_gcov
   variables:
     CHIP_NAME: "esp32c5"
-    ESPTOOL_PORT: "/dev/serial_ports/ttyACM-esp32"
     TEST_RUN_BOARD_OPTS: "-b esp32c5-builtin -p test_*.*Single"
 
 tests_esp32c5_idf6.0.x_lpcore:
@@ -177,7 +176,6 @@ tests_esp32c6_idf6.0.x:
     - job: fetch_gcov
   variables:
     CHIP_NAME: "esp32c6"
-    ESPTOOL_PORT: "/dev/serial_ports/ttyACM-esp32"
     TEST_RUN_BOARD_OPTS: "-b esp32c6-builtin -p test_*.*Single4MB test_*.*Single"
 
 # TODO OCD-1227
@@ -200,7 +198,6 @@ tests_esp32c61_idf6.0.x:
     - job: fetch_gcov
   variables:
     CHIP_NAME: "esp32c61"
-    ESPTOOL_PORT: "/dev/serial_ports/ttyACM-esp32"
     TEST_RUN_BOARD_OPTS: "-b esp32c61-builtin -p test_*.*Single"
 
 tests_esp32h2_idf6.0.x:
@@ -217,7 +214,6 @@ tests_esp32h2_idf6.0.x:
     - job: fetch_gcov
   variables:
     CHIP_NAME: "esp32h2"
-    ESPTOOL_PORT: "/dev/serial_ports/ttyACM-esp32"
     TEST_RUN_BOARD_OPTS: "-b esp32h2-builtin -p test_*.*Single4MB test_*.*Single"
 
 # TODO jtag runner
